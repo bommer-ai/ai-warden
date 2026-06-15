@@ -1,0 +1,18 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "aiwarden"
+version = "0.1.0"
+description = "Policy enforcement and observability for LLM agents. Zero code changes."
+dependencies = [
+    "anthropic>=0.109.1",
+]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aiwarden*"]
+
+[tool.setuptools.data-files]
+"." = ["aiwarden.pth"]

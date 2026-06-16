@@ -93,6 +93,8 @@ def _print_event(event: dict):
         print(f"  tags       : {event['tags']}")
     if event.get("tool_calls"):
         print(f"  tool_calls : {event['tool_calls']}")
+    if event.get("policy_blocked"):
+        print(f"  !! BLOCKED : rule={event.get('blocked_rule')}  tool={event.get('blocked_tool')}  input={event.get('blocked_input')}")
     if event.get("pii_redacted"):
         print(f"  pii_found  : {event.get('pii_types_found', [])}")
     if event.get("request_messages"):

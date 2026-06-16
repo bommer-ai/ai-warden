@@ -5,8 +5,8 @@ from uuid import uuid4
 
 from aiwarden.capture import capture
 from aiwarden.cost import compute_cost
-from aiwarden.pipeline import pipeline
-from aiwarden.pipeline.base import PolicyViolationError
+from aiwarden.policies import engine
+from aiwarden.policies.base import PolicyViolationError
 from aiwarden.session import get_or_create_session_id, compute_turn
 from aiwarden.tags import get_tags
 
@@ -36,14 +36,14 @@ def _patched_create(*args, **kwargs):
             },
         }
         # pre-processors run before stream starts
-        kwargs, block = pipeline.run_pre(kwargs)
+        kwargs, block = engine.run_pre(kwargs)
         if block:
             raise PolicyViolationError(block.reason)
         api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
         return _StreamWrapper(_original(*args, **api_kwargs), kwargs, time.monotonic())
 
     # 1. PRE-PROCESSORS
-    kwargs, block = pipeline.run_pre(kwargs)
+    kwargs, block = engine.run_pre(kwargs)
     if block:
         raise PolicyViolationError(block.reason)
 
@@ -54,7 +54,7 @@ def _patched_create(*args, **kwargs):
     latency    = int((time.monotonic() - start) * 1000)
 
     # 3. POST-PROCESSORS
-    response = pipeline.run_post(kwargs, response)
+    response = engine.run_post(kwargs, response)
 
     # 4. capture event
     _emit(kwargs, response, latency, streamed=False)
@@ -116,7 +116,7 @@ class _StreamWrapper:
         resp.choices[0].message.tool_calls = None
         resp.usage = _FakeResponse._Usage()
 
-        resp = pipeline.run_post(self._kwargs, resp)
+        resp = engine.run_post(self._kwargs, resp)
         latency = int((time.monotonic() - self._start) * 1000)
         _emit(self._kwargs, resp, latency, streamed=True)
 

@@ -16,3 +16,9 @@ include = ["aiwarden*"]
 
 [tool.setuptools.data-files]
 "." = ["aiwarden.pth"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+    "pyyaml>=6.0.3",
+]

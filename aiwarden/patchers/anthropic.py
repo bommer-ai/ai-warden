@@ -5,8 +5,8 @@ from uuid import uuid4
 
 from aiwarden.capture import capture
 from aiwarden.cost import compute_cost
-from aiwarden.pipeline import pipeline
-from aiwarden.pipeline.base import PolicyViolationError
+from aiwarden.policies import engine
+from aiwarden.policies.base import PolicyViolationError
 from aiwarden.session import get_or_create_session_id, compute_turn
 from aiwarden.tags import get_tags
 
@@ -59,23 +59,21 @@ def _patched_create(self, *args, **kwargs):
             _original_create(self, *args, **kwargs), kwargs, time.monotonic()
         )
 
-    # 1. PRE-PROCESSORS — run on request before API call
-    #    Can modify kwargs (inject memory, redact PII, add context)
-    #    or block the request entirely (budget exceeded, policy violation)
-    kwargs, block = pipeline.run_pre(kwargs)
+    # 1. PRE — run all pre-hook policies before LLM call
+    #    e.g. budget check, rate limit, PII redaction
+    kwargs, block = engine.run_pre(kwargs)
     if block:
         raise PolicyViolationError(block.reason)
 
-    # 2. real API call — kwargs may have been modified by pre-processors
-    #    Strip internal keys we stashed (prefixed with _) before sending
+    # 2. LLM call — strip internal _ keys before sending
     api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
     start      = time.monotonic()
     response   = _original_create(self, *args, **api_kwargs)
     latency    = int((time.monotonic() - start) * 1000)
 
-    # 3. POST-PROCESSORS — run on response before returning to agent
-    #    Can modify what the agent sees (guardrails, PII from output, etc.)
-    response = pipeline.run_post(kwargs, response)
+    # 3. POST — run all post-hook policies after LLM responds
+    #    e.g. tool blocking, output filtering, cost tracking
+    response = engine.run_post(kwargs, response)
 
     # 4. capture event for analytics (non-blocking)
     _emit(kwargs, response, latency, streamed=False)
@@ -92,7 +90,7 @@ def _patch_async(AsyncMessages):
     _original_async_create = AsyncMessages.create
 
     async def patched(self, *args, **kwargs):
-        kwargs, block = pipeline.run_pre(kwargs)
+        kwargs, block = engine.run_pre(kwargs)
         if block:
             raise PolicyViolationError(block.reason)
 
@@ -101,7 +99,7 @@ def _patch_async(AsyncMessages):
         response   = await _original_async_create(self, *args, **api_kwargs)
         latency    = int((time.monotonic() - start) * 1000)
 
-        response = pipeline.run_post(kwargs, response)
+        response = engine.run_post(kwargs, response)
         _emit(kwargs, response, latency, streamed=False)
         return response
 
@@ -227,10 +225,15 @@ def _emit(kwargs: dict, response, latency_ms: int, streamed: bool):
             "tool_calls":        tool_calls,
             "pii_redacted":      bool(pii_found),
             "pii_types_found":   list(set(pii_found)),
-            "request_messages":  messages,     # already clean — pre-processor ran
-            "response_content":  text_content, # already clean — post-processor ran
+            "request_messages":  messages,
+            "response_content":  text_content,
             "system":            system,
             "tags":              {**auto_tags, **get_tags()},
+            # policy violation metadata — set by PolicyEnforcer on refusal
+            "policy_blocked":    kwargs.get("_policy_blocked", False),
+            "blocked_rule":      kwargs.get("_blocked_rule", ""),
+            "blocked_tool":      kwargs.get("_blocked_tool", ""),
+            "blocked_input":     kwargs.get("_blocked_input", {}),
             **_extract_caller(),
         }
 

@@ -1,9 +1,9 @@
 import re
 from typing import Optional
 
-from aiwarden.pipeline.base import Block, PreProcessor
+from aiwarden.policies.base import Block, Policy
 
-PATTERNS: dict[str, re.Pattern] = {
+_PATTERNS: dict[str, re.Pattern] = {
     "email":   re.compile(r"[a-zA-Z0-9_.+-]+@[a-zA-Z0-9-]+\.[a-zA-Z0-9-.]+"),
     "phone":   re.compile(r"\b(\+?1?\s?)?(\(?\d{3}\)?[\s.\-]?\d{3}[\s.\-]?\d{4})\b"),
     "ssn":     re.compile(r"\b\d{3}-\d{2}-\d{4}\b"),
@@ -12,28 +12,26 @@ PATTERNS: dict[str, re.Pattern] = {
 }
 
 
-def redact(text: str) -> tuple[str, list[str]]:
-    """Returns (redacted_text, list_of_pii_types_found)."""
+def _redact(text: str) -> tuple[str, list[str]]:
     if not isinstance(text, str):
         return text, []
     found = []
-    for pii_type, pattern in PATTERNS.items():
+    for pii_type, pattern in _PATTERNS.items():
         if pattern.search(text):
             found.append(pii_type)
             text = pattern.sub(f"[REDACTED:{pii_type}]", text)
     return text, found
 
 
-def redact_messages(messages: list) -> tuple[list, list[str]]:
-    """Redact PII from all message contents. Returns (clean_messages, pii_types)."""
-    clean   = []
+def _redact_messages(messages: list) -> tuple[list, list[str]]:
+    clean: list = []
     all_pii: set[str] = set()
 
     for msg in messages:
         content = msg.get("content", "")
 
         if isinstance(content, str):
-            clean_content, found = redact(content)
+            clean_content, found = _redact(content)
             all_pii.update(found)
             clean.append({**msg, "content": clean_content})
 
@@ -43,7 +41,7 @@ def redact_messages(messages: list) -> tuple[list, list[str]]:
                 block_type = block.get("type") if isinstance(block, dict) else getattr(block, "type", "")
                 if block_type == "text":
                     raw = block.get("text", "") if isinstance(block, dict) else getattr(block, "text", "")
-                    clean_text, found = redact(raw)
+                    clean_text, found = _redact(raw)
                     all_pii.update(found)
                     clean_blocks.append(
                         {**block, "text": clean_text} if isinstance(block, dict) else block
@@ -57,25 +55,30 @@ def redact_messages(messages: list) -> tuple[list, list[str]]:
     return clean, list(all_pii)
 
 
-class PIIRedactPreProcessor(PreProcessor):
+class PIIPolicy(Policy):
     """
-    Redacts PII from input messages and system prompt before they reach the LLM.
-    Stores found PII types in request metadata so _emit can record them.
+    Redacts PII from request messages and system prompt before sending to LLM.
+    Stores found PII types under _pii_found so the event emitter can record them.
     """
 
-    def process(self, request: dict) -> tuple[dict, Optional[Block]]:
+    name          = "pii-protection"
+    default_hooks = ["pre"]
+
+    def pre(self, request: dict) -> tuple[dict, Optional[Block]]:
         messages = request.get("messages", [])
-        clean_messages, pii_found = redact_messages(messages)
+        clean_messages, pii_found = _redact_messages(messages)
 
         system = request.get("system", "")
         if system:
-            system, sys_pii = redact(system)
+            system, sys_pii = _redact(system)
             pii_found.extend(sys_pii)
 
         return {
             **request,
             "messages": clean_messages,
             **({"system": system} if system else {}),
-            # stash for _emit to pick up — not sent to the API
             "_pii_found": list(set(pii_found)),
         }, None
+
+    def post(self, request: dict, response: object) -> object:
+        return response

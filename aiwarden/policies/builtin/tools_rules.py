@@ -1,6 +1,11 @@
+import logging
 import re
 from dataclasses import dataclass, field
 from fnmatch import fnmatch
+
+log = logging.getLogger(__name__)
+
+_KNOWN_OPS = frozenset({"contains", "startswith", "not_startswith", "equals", "in", "regex"})
 
 
 # ── Rule dataclass ─────────────────────────────────────────────────────────────
@@ -47,6 +52,9 @@ def _match_tool(pattern, tool_name: str) -> bool:
 
 def _match_field(value: str, matchers: dict) -> bool:
     for op, pattern in matchers.items():
+        if op not in _KNOWN_OPS:
+            log.warning("[aiwarden] unknown match operator '%s' — rule will NOT match (fail-safe)", op)
+            return False
         if op == "contains":
             if str(pattern) not in value:
                 return False

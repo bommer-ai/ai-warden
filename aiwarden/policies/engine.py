@@ -1,57 +1,103 @@
 import logging
 from typing import Optional
 
-from aiwarden.policies.base import Block, Policy
+from aiwarden.event import PolicyResult
+from aiwarden.policies.base import Block, Policy, Warn
 
 log = logging.getLogger(__name__)
 
 
 class PolicyEngine:
     """
-    Runs all enabled policies in order.
+    Runs all enabled policies in priority order (lower priority = runs first).
 
-    pre()  — called before every LLM request.
-    post() — called after every LLM response, before agent sees it.
+    pre()  — called before every LLM request. Short-circuits on Block.
+    post() — called after every LLM response. All post-hooks always run.
 
-    Policies are loaded lazily on first use so AIWARDEN_POLICY_FILE is
-    resolved after the process environment is fully initialised.
+    Tracks which policies fired (warn or block) for the event log.
     """
 
     def __init__(self):
         self._policies: list[Policy] | None = None
 
-    def run_pre(self, request: dict) -> tuple[dict, Optional[Block]]:
+    def run_pre(self, request: dict) -> tuple[dict, Optional[Block], list[PolicyResult]]:
+        """
+        Run pre-hooks in priority order.
+        Returns (modified_request, block_or_none, list_of_fired_policies).
+        Short-circuits on Block — remaining policies don't run.
+        """
+        fired: list[PolicyResult] = []
+
         for policy in self._get_policies():
             if "pre" not in policy.hooks:
                 continue
             try:
-                request, block = policy.pre(request)
-                if block:
-                    log.info("[aiwarden] policy '%s' blocked request: %s", policy.name, block.reason)
-                    return request, block
+                request, result = policy.pre(request)
+                if isinstance(result, Block):
+                    fired.append(PolicyResult(
+                        name=policy.name, action="block",
+                        message=result.reason, hook="pre",
+                    ))
+                    log.info("[aiwarden] policy '%s' blocked: %s", policy.name, result.reason)
+                    return request, result, fired
+                elif isinstance(result, Warn):
+                    fired.append(PolicyResult(
+                        name=policy.name, action="warn",
+                        message=result.reason, hook="pre",
+                    ))
+                    log.info("[aiwarden] policy '%s' warned: %s", policy.name, result.reason)
             except Exception as e:
                 log.error("[aiwarden] policy '%s' pre() error: %s", policy.name, e)
-        return request, None
 
-    def run_post(self, request: dict, response: object) -> object:
+        return request, None, fired
+
+    def run_post(self, request: dict, response: object) -> tuple[object, list[PolicyResult]]:
+        """
+        Run post-hooks in priority order.
+        Returns (modified_response, list_of_fired_policies).
+        """
+        fired: list[PolicyResult] = []
+
         for policy in self._get_policies():
             if "post" not in policy.hooks:
                 continue
             try:
-                response = policy.post(request, response)
+                result = policy.post(request, response)
+                if isinstance(result, tuple) and len(result) == 2:
+                    response, warn = result
+                    if isinstance(warn, Warn):
+                        fired.append(PolicyResult(
+                            name=policy.name, action="warn",
+                            message=warn.reason, hook="post",
+                        ))
+                        log.info("[aiwarden] policy '%s' post warned: %s", policy.name, warn.reason)
+                else:
+                    response = result
             except Exception as e:
                 log.error("[aiwarden] policy '%s' post() error: %s", policy.name, e)
-        return response
 
-    def register(self, policy: Policy) -> "PolicyEngine":
-        """Programmatically add a policy — useful for custom policies in agent code."""
+        return response, fired
+
+    def register(self, policy: Policy, first: bool = False) -> "PolicyEngine":
+        """Programmatically add a policy."""
         if self._policies is None:
             self._policies = []
-        self._policies.append(policy)
+        if first:
+            self._policies.insert(0, policy)
+        else:
+            self._policies.append(policy)
+        self._policies.sort(key=lambda p: p.priority)
         return self
 
     def _get_policies(self) -> list[Policy]:
         if self._policies is None:
-            from aiwarden.policies.loader import load_policies
-            self._policies = load_policies()
+            try:
+                from aiwarden.policies.loader import load_policies
+                self._policies = load_policies()
+                self._policies.sort(key=lambda p: p.priority)
+            except Exception as e:
+                log.warning(
+                    "[aiwarden] failed to load policies — running unprotected: %s", e
+                )
+                self._policies = []
         return self._policies

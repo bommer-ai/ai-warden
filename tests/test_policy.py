@@ -16,7 +16,7 @@ from unittest.mock import patch
 import pytest
 
 from aiwarden.policies.base import PolicyViolationError
-from aiwarden.policies.builtin.tools import ToolsPolicy, _refusal_response
+from aiwarden.policies.builtin.tools import ToolsPolicy, _build_refusal
 from aiwarden.policies.builtin.tools_rules import (
     BUILTIN_TEMPLATES,
     PolicyRule,

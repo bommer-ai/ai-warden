@@ -1,14 +1,8 @@
 import time
-import traceback
-from datetime import datetime, timezone
-from uuid import uuid4
 
-from aiwarden.capture import capture
-from aiwarden.cost import compute_cost
+from aiwarden.patchers._common import build_and_capture
 from aiwarden.policies import engine
 from aiwarden.policies.base import PolicyViolationError
-from aiwarden.session import get_or_create_session_id, compute_turn
-from aiwarden.tags import get_tags
 
 _patched         = False
 _original_create = None
@@ -17,7 +11,6 @@ _original_create = None
 def patch(anthropic_module):
     """
     Patches at the Messages class level — works for all client instances.
-    anthropic.Anthropic().messages.create → our wrapper
     """
     global _patched, _original_create
 
@@ -27,8 +20,8 @@ def patch(anthropic_module):
 
     try:
         from anthropic.resources.messages import Messages
-        _original_create    = Messages.create
-        Messages.create     = _patched_create
+        _original_create = Messages.create
+        Messages.create  = _patched_create
     except Exception:
         pass
 
@@ -55,28 +48,33 @@ def patch(anthropic_module):
 
 def _patched_create(self, *args, **kwargs):
     if kwargs.get("stream"):
+        # Pre-hooks run before stream starts
+        kwargs, block, pre_fired = engine.run_pre(kwargs)
+        if block:
+            _emit_blocked(kwargs, pre_fired)
+            raise PolicyViolationError(block.reason)
+        api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
         return _StreamWrapper(
-            _original_create(self, *args, **kwargs), kwargs, time.monotonic()
+            _original_create(self, *args, **api_kwargs), kwargs, time.monotonic(), pre_fired
         )
 
-    # 1. PRE — run all pre-hook policies before LLM call
-    #    e.g. budget check, rate limit, PII redaction
-    kwargs, block = engine.run_pre(kwargs)
+    # 1. PRE-HOOKS
+    kwargs, block, pre_fired = engine.run_pre(kwargs)
     if block:
+        _emit_blocked(kwargs, pre_fired)
         raise PolicyViolationError(block.reason)
 
-    # 2. LLM call — strip internal _ keys before sending
+    # 2. LLM CALL
     api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
     start      = time.monotonic()
     response   = _original_create(self, *args, **api_kwargs)
     latency    = int((time.monotonic() - start) * 1000)
 
-    # 3. POST — run all post-hook policies after LLM responds
-    #    e.g. tool blocking, output filtering, cost tracking
-    response = engine.run_post(kwargs, response)
+    # 3. POST-HOOKS
+    response, post_fired = engine.run_post(kwargs, response)
 
-    # 4. capture event for analytics (non-blocking)
-    _emit(kwargs, response, latency, streamed=False)
+    # 4. CAPTURE
+    _emit(kwargs, response, latency, streamed=False, pre_fired=pre_fired, post_fired=post_fired)
     return response
 
 
@@ -90,8 +88,9 @@ def _patch_async(AsyncMessages):
     _original_async_create = AsyncMessages.create
 
     async def patched(self, *args, **kwargs):
-        kwargs, block = engine.run_pre(kwargs)
+        kwargs, block, pre_fired = engine.run_pre(kwargs)
         if block:
+            _emit_blocked(kwargs, pre_fired)
             raise PolicyViolationError(block.reason)
 
         api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
@@ -99,8 +98,8 @@ def _patch_async(AsyncMessages):
         response   = await _original_async_create(self, *args, **api_kwargs)
         latency    = int((time.monotonic() - start) * 1000)
 
-        response = engine.run_post(kwargs, response)
-        _emit(kwargs, response, latency, streamed=False)
+        response, post_fired = engine.run_post(kwargs, response)
+        _emit(kwargs, response, latency, streamed=False, pre_fired=pre_fired, post_fired=post_fired)
         return response
 
     AsyncMessages.create = patched
@@ -109,14 +108,12 @@ def _patch_async(AsyncMessages):
 # ── streaming wrapper ─────────────────────────────────────────────────────────
 
 class _StreamWrapper:
-    """
-    Wraps Anthropic streaming context manager transparently.
-    Pre-processors run before stream starts, post-processors run on final message.
-    """
-    def __init__(self, stream, request_kwargs, start_time):
-        self._stream  = stream
-        self._kwargs  = request_kwargs
-        self._start   = start_time
+    def __init__(self, stream, request_kwargs, start_time, pre_fired):
+        self._stream    = stream
+        self._kwargs    = request_kwargs
+        self._start     = start_time
+        self._pre_fired = pre_fired
+        self._finalized = False
 
     def __enter__(self):
         self._stream.__enter__()
@@ -136,50 +133,30 @@ class _StreamWrapper:
         return getattr(self._stream, name)
 
     def _finalize(self):
+        if self._finalized:
+            return
+        self._finalized = True
         try:
-            final   = self._stream.get_final_message()
-            final   = pipeline.run_post(self._kwargs, final)
+            final = self._stream.get_final_message()
+            final, post_fired = engine.run_post(self._kwargs, final)
             latency = int((time.monotonic() - self._start) * 1000)
-            _emit(self._kwargs, final, latency, streamed=True)
+            _emit(self._kwargs, final, latency, streamed=True,
+                  pre_fired=self._pre_fired, post_fired=post_fired)
         except Exception:
             pass
 
 
-# ── shared emit ───────────────────────────────────────────────────────────────
+# ── emit helpers ─────────────────────────────────────────────────────────────
 
-def _extract_caller() -> dict:
-    stack = traceback.extract_stack()
-    for frame in reversed(stack):
-        if (
-            "aiwarden" not in frame.filename
-            and "site-packages" not in frame.filename
-            and "anthropic" not in frame.filename
-        ):
-            return {
-                "caller_file":     frame.filename,
-                "caller_line":     frame.lineno,
-                "caller_function": frame.name,
-            }
-    return {}
-
-
-def _emit(kwargs: dict, response, latency_ms: int, streamed: bool):
-    """
-    Captures the event for analytics.
-    By this point:
-      - kwargs["messages"] are already PII-cleaned (by PIIRedactPreProcessor)
-      - response may already be modified (by post-processors)
-    So we just record what's here — no inline redaction needed.
-    """
+def _emit(kwargs, response, latency_ms, streamed, pre_fired=None, post_fired=None):
+    """Extract Anthropic-specific fields and delegate to common build_and_capture."""
     try:
         messages = kwargs.get("messages", [])
-        system   = kwargs.get("system", "")
         model    = kwargs.get("model", getattr(response, "model", "unknown"))
+        system   = kwargs.get("system", "")
+        if not isinstance(system, str):
+            system = str(system)
 
-        # PII metadata stashed by PIIRedactPreProcessor
-        pii_found = kwargs.get("_pii_found", [])
-
-        # extract text content and tool calls from response
         text_content = ""
         tool_calls   = []
         for block in getattr(response, "content", []):
@@ -193,51 +170,50 @@ def _emit(kwargs: dict, response, latency_ms: int, streamed: bool):
                     "id":        getattr(block, "id", ""),
                 })
 
-        # usage
         usage             = getattr(response, "usage", None)
-        prompt_tokens     = getattr(usage, "input_tokens",  0) or 0
+        prompt_tokens     = getattr(usage, "input_tokens", 0) or 0
         completion_tokens = getattr(usage, "output_tokens", 0) or 0
-        cost              = compute_cost(model, prompt_tokens, completion_tokens)
 
-        # session
-        session_id = get_or_create_session_id(messages)
-        turn       = compute_turn(messages)
-
-        # auto tags from metadata
-        auto_tags = {}
-        if meta := kwargs.get("metadata", {}):
-            auto_tags.update(meta)
-
-        event = {
-            "id":                str(uuid4()),
-            "timestamp":         datetime.now(timezone.utc).isoformat(),
-            "provider":          "anthropic",
-            "type":              "chat",
-            "model":             model,
-            "session_id":        session_id,
-            "turn":              turn,
-            "streamed":          streamed,
-            "prompt_tokens":     prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "cost":              cost,
-            "latency_ms":        latency_ms,
-            "finish_reason":     getattr(response, "stop_reason", None),
-            "tool_calls":        tool_calls,
-            "pii_redacted":      bool(pii_found),
-            "pii_types_found":   list(set(pii_found)),
-            "request_messages":  messages,
-            "response_content":  text_content,
-            "system":            system,
-            "tags":              {**auto_tags, **get_tags()},
-            # policy violation metadata — set by PolicyEnforcer on refusal
-            "policy_blocked":    kwargs.get("_policy_blocked", False),
-            "blocked_rule":      kwargs.get("_blocked_rule", ""),
-            "blocked_tool":      kwargs.get("_blocked_tool", ""),
-            "blocked_input":     kwargs.get("_blocked_input", {}),
-            **_extract_caller(),
-        }
-
-        capture(event)
-
+        build_and_capture(
+            provider="anthropic",
+            kwargs=kwargs,
+            messages=messages,
+            model=model,
+            text_content=text_content,
+            tool_calls=tool_calls,
+            finish_reason=getattr(response, "stop_reason", None) or "",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=latency_ms,
+            streamed=streamed,
+            pre_fired=pre_fired,
+            post_fired=post_fired,
+            pii_found=kwargs.get("_pii_found", []),
+            system=system,
+        )
     except Exception:
-        pass  # never crash user app
+        pass
+
+
+def _emit_blocked(kwargs, pre_fired):
+    """Emit event for a blocked request (no response)."""
+    try:
+        messages = kwargs.get("messages", [])
+        model    = kwargs.get("model", "unknown")
+        system   = kwargs.get("system", "")
+        if not isinstance(system, str):
+            system = str(system)
+
+        build_and_capture(
+            provider="anthropic",
+            kwargs=kwargs,
+            messages=messages,
+            model=model,
+            finish_reason="blocked",
+            pre_fired=pre_fired,
+            blocked=True,
+            pii_found=kwargs.get("_pii_found", []),
+            system=system,
+        )
+    except Exception:
+        pass

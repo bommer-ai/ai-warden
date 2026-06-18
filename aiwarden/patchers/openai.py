@@ -1,32 +1,39 @@
 import time
-import traceback
-from datetime import datetime, timezone
-from uuid import uuid4
 
-from aiwarden.capture import capture
-from aiwarden.cost import compute_cost
+from aiwarden.patchers._common import build_and_capture
 from aiwarden.policies import engine
 from aiwarden.policies.base import PolicyViolationError
-from aiwarden.session import get_or_create_session_id, compute_turn
-from aiwarden.tags import get_tags
 
 _patched  = False
 _original = None
 
 
 def patch(openai_module):
+    """
+    Patches at the class level for OpenAI SDK.
+    openai.OpenAI().chat.completions.create → our wrapper
+    """
     global _patched, _original
     if _patched:
         return
-    _patched  = True
-    _original = openai_module.chat.completions.create
+    _patched = True
 
-    openai_module.chat.completions.create = _patched_create
+    try:
+        from openai.resources.chat.completions import Completions
+        _original = Completions.create
+        Completions.create = _patched_create
+    except Exception:
+        # Fallback: patch module-level attribute (older SDK versions)
+        try:
+            _original = openai_module.chat.completions.create
+            openai_module.chat.completions.create = lambda *a, **kw: _patched_create(None, *a, **kw)
+        except Exception:
+            pass
 
 
 # ── sync ──────────────────────────────────────────────────────────────────────
 
-def _patched_create(*args, **kwargs):
+def _patched_create(self, *args, **kwargs):
     if kwargs.get("stream"):
         kwargs = {
             **kwargs,
@@ -35,40 +42,44 @@ def _patched_create(*args, **kwargs):
                 "include_usage": True,
             },
         }
-        # pre-processors run before stream starts
-        kwargs, block = engine.run_pre(kwargs)
+        kwargs, block, pre_fired = engine.run_pre(kwargs)
         if block:
+            _emit_blocked(kwargs, pre_fired)
             raise PolicyViolationError(block.reason)
         api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
-        return _StreamWrapper(_original(*args, **api_kwargs), kwargs, time.monotonic())
+        raw_stream = _original(self, *args, **api_kwargs) if self else _original(*args, **api_kwargs)
+        return _StreamWrapper(raw_stream, kwargs, time.monotonic(), pre_fired)
 
-    # 1. PRE-PROCESSORS
-    kwargs, block = engine.run_pre(kwargs)
+    # 1. PRE-HOOKS
+    kwargs, block, pre_fired = engine.run_pre(kwargs)
     if block:
+        _emit_blocked(kwargs, pre_fired)
         raise PolicyViolationError(block.reason)
 
-    # 2. real API call
+    # 2. LLM CALL
     api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
     start      = time.monotonic()
-    response   = _original(*args, **api_kwargs)
+    response   = _original(self, *args, **api_kwargs) if self else _original(*args, **api_kwargs)
     latency    = int((time.monotonic() - start) * 1000)
 
-    # 3. POST-PROCESSORS
-    response = engine.run_post(kwargs, response)
+    # 3. POST-HOOKS
+    response, post_fired = engine.run_post(kwargs, response)
 
-    # 4. capture event
-    _emit(kwargs, response, latency, streamed=False)
+    # 4. CAPTURE
+    _emit(kwargs, response, latency, streamed=False, pre_fired=pre_fired, post_fired=post_fired)
     return response
 
 
 # ── streaming wrapper ─────────────────────────────────────────────────────────
 
 class _StreamWrapper:
-    def __init__(self, stream, request_kwargs, start_time):
-        self._stream  = stream
-        self._kwargs  = request_kwargs
-        self._start   = start_time
-        self._chunks  = []
+    def __init__(self, stream, request_kwargs, start_time, pre_fired):
+        self._stream    = stream
+        self._kwargs    = request_kwargs
+        self._start     = start_time
+        self._pre_fired = pre_fired
+        self._chunks    = []
+        self._finalized = False
 
     def __iter__(self):
         return self
@@ -86,62 +97,56 @@ class _StreamWrapper:
         return self
 
     def __exit__(self, *args):
-        return self._stream.__exit__(*args)
+        self._finalize()
+        try:
+            return self._stream.__exit__(*args)
+        except Exception:
+            return False
 
     def _finalize(self):
-        content = "".join(
-            c.choices[0].delta.content or ""
-            for c in self._chunks
-            if c.choices and c.choices[0].delta.content
-        )
-        usage = next(
-            (c.usage for c in reversed(self._chunks) if getattr(c, "usage", None)),
-            None,
-        )
+        if self._finalized:
+            return
+        self._finalized = True
+        try:
+            content = "".join(
+                c.choices[0].delta.content or ""
+                for c in self._chunks
+                if c.choices and c.choices[0].delta and c.choices[0].delta.content
+            )
+            usage = next(
+                (c.usage for c in reversed(self._chunks) if getattr(c, "usage", None)),
+                None,
+            )
 
-        class _FakeResponse:
-            class _Choice:
-                class _Message:
-                    pass
-                message      = _Message()
-                finish_reason = "stop"
-            choices = [_Choice()]
+            # Build a minimal response-like object for post-hooks
+            from types import SimpleNamespace
+            fake_msg = SimpleNamespace(content=content, tool_calls=None)
+            fake_choice = SimpleNamespace(message=fake_msg, finish_reason="stop")
+            fake_usage = SimpleNamespace(
+                prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            )
+            fake_response = SimpleNamespace(
+                choices=[fake_choice],
+                usage=fake_usage,
+                model=self._kwargs.get("model", ""),
+            )
 
-            class _Usage:
-                prompt_tokens     = getattr(usage, "prompt_tokens",     0)
-                completion_tokens = getattr(usage, "completion_tokens", 0)
-
-        resp = _FakeResponse()
-        resp.choices[0].message.content    = content
-        resp.choices[0].message.tool_calls = None
-        resp.usage = _FakeResponse._Usage()
-
-        resp = engine.run_post(self._kwargs, resp)
-        latency = int((time.monotonic() - self._start) * 1000)
-        _emit(self._kwargs, resp, latency, streamed=True)
-
-
-# ── shared emit ───────────────────────────────────────────────────────────────
-
-def _extract_caller() -> dict:
-    stack = traceback.extract_stack()
-    for frame in reversed(stack):
-        if "aiwarden" not in frame.filename and "site-packages" not in frame.filename:
-            return {
-                "caller_file":     frame.filename,
-                "caller_line":     frame.lineno,
-                "caller_function": frame.name,
-            }
-    return {}
+            fake_response, post_fired = engine.run_post(self._kwargs, fake_response)
+            latency = int((time.monotonic() - self._start) * 1000)
+            _emit(self._kwargs, fake_response, latency, streamed=True,
+                  pre_fired=self._pre_fired, post_fired=post_fired)
+        except Exception:
+            pass
 
 
-def _emit(kwargs: dict, response, latency_ms: int, streamed: bool):
+# ── emit helpers ─────────────────────────────────────────────────────────────
+
+def _emit(kwargs, response, latency_ms, streamed, pre_fired=None, post_fired=None):
+    """Extract OpenAI-specific fields and delegate to common build_and_capture."""
     try:
         messages = kwargs.get("messages", [])
-        model    = kwargs.get("model", "unknown")
-
-        # PII metadata stashed by PIIRedactPreProcessor
-        pii_found = kwargs.get("_pii_found", [])
+        model    = kwargs.get("model", getattr(response, "model", "unknown"))
 
         msg         = response.choices[0].message
         raw_content = getattr(msg, "content", "") or ""
@@ -149,46 +154,46 @@ def _emit(kwargs: dict, response, latency_ms: int, streamed: bool):
         tool_calls = []
         if getattr(msg, "tool_calls", None):
             tool_calls = [
-                {"name": tc.function.name, "arguments": tc.function.arguments}
+                {"name": tc.function.name, "arguments": tc.function.arguments, "id": getattr(tc, "id", "")}
                 for tc in msg.tool_calls
             ]
 
-        usage             = response.usage
-        prompt_tokens     = getattr(usage, "prompt_tokens",     0) or 0
+        usage             = getattr(response, "usage", None)
+        prompt_tokens     = getattr(usage, "prompt_tokens", 0) or 0
         completion_tokens = getattr(usage, "completion_tokens", 0) or 0
-        cost              = compute_cost(model, prompt_tokens, completion_tokens)
 
-        session_id = get_or_create_session_id(messages)
-        turn       = compute_turn(messages)
+        build_and_capture(
+            provider="openai",
+            kwargs=kwargs,
+            messages=messages,
+            model=model,
+            text_content=raw_content,
+            tool_calls=tool_calls,
+            finish_reason=getattr(response.choices[0], "finish_reason", "") or "",
+            prompt_tokens=prompt_tokens,
+            completion_tokens=completion_tokens,
+            latency_ms=latency_ms,
+            streamed=streamed,
+            pre_fired=pre_fired,
+            post_fired=post_fired,
+            pii_found=kwargs.get("_pii_found", []),
+        )
+    except Exception:
+        pass
 
-        auto_tags = {}
-        if user := kwargs.get("user"):
-            auto_tags["user"] = user
 
-        event = {
-            "id":                str(uuid4()),
-            "timestamp":         datetime.now(timezone.utc).isoformat(),
-            "provider":          "openai",
-            "type":              "chat",
-            "model":             model,
-            "session_id":        session_id,
-            "turn":              turn,
-            "streamed":          streamed,
-            "prompt_tokens":     prompt_tokens,
-            "completion_tokens": completion_tokens,
-            "cost":              cost,
-            "latency_ms":        latency_ms,
-            "finish_reason":     getattr(response.choices[0], "finish_reason", None),
-            "tool_calls":        tool_calls,
-            "pii_redacted":      bool(pii_found),
-            "pii_types_found":   pii_found,
-            "request_messages":  messages,    # already clean
-            "response_content":  raw_content, # already clean
-            "tags":              {**auto_tags, **get_tags()},
-            **_extract_caller(),
-        }
-
-        capture(event)
-
+def _emit_blocked(kwargs, pre_fired):
+    """Emit event for a blocked request."""
+    try:
+        build_and_capture(
+            provider="openai",
+            kwargs=kwargs,
+            messages=kwargs.get("messages", []),
+            model=kwargs.get("model", "unknown"),
+            finish_reason="blocked",
+            pre_fired=pre_fired,
+            blocked=True,
+            pii_found=kwargs.get("_pii_found", []),
+        )
     except Exception:
         pass

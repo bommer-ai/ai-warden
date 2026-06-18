@@ -1,3 +1,4 @@
+import atexit
 import json
 import threading
 from pathlib import Path
@@ -40,9 +41,19 @@ def _ensure_worker():
             _worker_started = True
             t = threading.Thread(target=_worker, daemon=True, name="aiwarden-worker")
             t.start()
+            atexit.register(flush)
 
 
 def _worker():
+    """Outer loop with crash recovery — thread never dies until process exits."""
+    while True:
+        try:
+            _worker_inner()
+        except BaseException:
+            pass
+
+
+def _worker_inner():
     buffer = []
     while True:
         try:
@@ -56,6 +67,8 @@ def _worker():
                 _flush(buffer)
                 buffer = []
         except Exception:
+            if buffer:
+                _flush(buffer)
             buffer = []
 
 
@@ -72,36 +85,27 @@ def _write_event(event: dict):
         log_path = Path(config.LOG_FILE)
         log_path.parent.mkdir(parents=True, exist_ok=True)
         with log_path.open("a") as f:
-            f.write(json.dumps(event) + "\n")
+            f.write(json.dumps(event, default=str) + "\n")
     except Exception:
         pass
 
 
 def _print_event(event: dict):
-    print(f"\n{'─'*60}")
-    print(f"[aiwarden] {event.get('timestamp', '')}")
-    print(f"  id         : {event.get('id', '')}")
-    print(f"  provider   : {event.get('provider', '')}  type: {event.get('type', '')}")
-    print(f"  model      : {event.get('model', 'unknown')}")
-    print(f"  session_id : {event.get('session_id', '')}  turn: {event.get('turn', 0)}")
-    print(f"  tokens     : prompt={event.get('prompt_tokens',0)}  completion={event.get('completion_tokens',0)}")
-    print(f"  cost       : ${event.get('cost', 0):.6f}")
-    print(f"  latency_ms : {event.get('latency_ms', 0)} ms")
-    print(f"  finish     : {event.get('finish_reason', '')}  streamed: {event.get('streamed', False)}")
-    print(f"  caller     : {event.get('caller_file','?')}:{event.get('caller_line','?')} in {event.get('caller_function','?')}")
-    if event.get("tags"):
-        print(f"  tags       : {event['tags']}")
-    if event.get("tool_calls"):
-        print(f"  tool_calls : {event['tool_calls']}")
-    if event.get("policy_blocked"):
-        print(f"  !! BLOCKED : rule={event.get('blocked_rule')}  tool={event.get('blocked_tool')}  input={event.get('blocked_input')}")
-    if event.get("pii_redacted"):
-        print(f"  pii_found  : {event.get('pii_types_found', [])}")
-    if event.get("request_messages"):
-        print(f"  messages   :")
-        for msg in event.get("request_messages", []):
-            role    = msg.get("role", "")
-            content = str(msg.get("content", ""))[:200]
-            print(f"    [{role}] {content}")
-        print(f"  response   : {str(event.get('response_content', ''))[:200]}")
-    print(f"{'─'*60}")
+    try:
+        print(f"\n{'─'*60}")
+        print(f"[aiwarden] {event.get('timestamp', '')}")
+        print(f"  provider   : {event.get('provider', '')}  model: {event.get('model', 'unknown')}")
+        print(f"  run_id     : {event.get('run_id', '')}  turn: {event.get('turn', 0)}")
+        print(f"  tokens     : prompt={event.get('prompt_tokens',0)}  completion={event.get('completion_tokens',0)}")
+        print(f"  cost       : ${event.get('cost', 0):.6f}")
+        print(f"  latency_ms : {event.get('latency_ms', 0)} ms")
+        print(f"  finish     : {event.get('finish_reason', '')}  streamed: {event.get('streamed', False)}")
+        if event.get("policy_fired"):
+            print(f"  policies   : {event.get('policies', [])}")
+        if event.get("policy_blocked"):
+            print(f"  !! BLOCKED")
+        if event.get("tool_calls"):
+            print(f"  tool_calls : {[tc.get('name') for tc in event.get('tool_calls', [])]}")
+        print(f"{'─'*60}")
+    except Exception:
+        pass

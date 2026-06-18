@@ -1,4 +1,13 @@
+"""
+Budget policy — tracks LLM spend and blocks requests when budget is exceeded.
+
+NOTE: Spend is tracked in-memory within this process only. In multi-process
+deployments (gunicorn workers, Kubernetes pods), each process has independent
+spend tracking. For distributed enforcement, implement a custom BudgetPolicy
+subclass that writes to Redis or a shared database.
+"""
 import logging
+import threading
 from datetime import datetime, timezone
 from typing import Optional
 
@@ -14,39 +23,23 @@ class BudgetPolicy(Policy):
     pre()  — checks accumulated spend before calling LLM. Blocks if over limit.
     post() — records actual cost after LLM responds.
 
-    Spend is tracked in-memory per group (team, user, deployment, etc.).
-    Resets automatically when the configured period rolls over.
-
     Config:
-        group_by: metadata.team        # dotted path into request — e.g. metadata.user_id
+        group_by: metadata.team
         limits:
-          engineering: 500.00          # per-group limit
-          intern: 20.00
-          default: 100.00              # fallback for unknown groups
-        # OR a flat limit for all:
-        # limit: 100.00
-        reset: monthly                 # daily | weekly | monthly
-
-    Example with per-dimension limits:
-        limits:
-          - when:
-              metadata.team: intern
-              metadata.deployment: prod
-            limit: 10.00
-          - when:
-              metadata.team: engineering
-            limit: 1000.00
-          - default: 50.00
+          engineering: 500.00
+          default: 100.00
+        reset: monthly
+        priority: 10
     """
 
     name          = "budget-control"
+    priority      = 10
     default_hooks = ["pre", "post"]
 
     def __init__(self, config: dict = None):
         super().__init__(config)
-        self._spend: dict[str, dict[str, float]] = {}   # {group: {period: spend}}
-
-    # ── pre: check before LLM call ────────────────────────────────────────────
+        self._spend: dict[str, dict[str, float]] = {}
+        self._lock = threading.Lock()
 
     def pre(self, request: dict) -> tuple[dict, Optional[Block]]:
         group = self._get_group(request)
@@ -62,19 +55,23 @@ class BudgetPolicy(Policy):
             )
         return request, None
 
-    # ── post: record actual cost after LLM responds ───────────────────────────
-
     def post(self, request: dict, response: object) -> object:
         try:
             from aiwarden.cost import compute_cost
-            model  = request.get("model", "")
-            usage  = getattr(response, "usage", None)
+            model = request.get("model", "")
+            usage = getattr(response, "usage", None)
             if usage:
-                cost  = compute_cost(
-                    model,
-                    getattr(usage, "input_tokens",  0) or 0,
-                    getattr(usage, "output_tokens", 0) or 0,
+                prompt_tokens = (
+                    getattr(usage, "input_tokens", 0)
+                    or getattr(usage, "prompt_tokens", 0)
+                    or 0
                 )
+                completion_tokens = (
+                    getattr(usage, "output_tokens", 0)
+                    or getattr(usage, "completion_tokens", 0)
+                    or 0
+                )
+                cost = compute_cost(model, prompt_tokens, completion_tokens)
                 group = self._get_group(request)
                 self._add_spend(group, cost)
                 log.debug("[aiwarden] budget recorded — group=%s cost=%.6f", group, cost)
@@ -82,10 +79,9 @@ class BudgetPolicy(Policy):
             log.error("[aiwarden] budget post() error: %s", e)
         return response
 
-    # ── spend helpers ─────────────────────────────────────────────────────────
+    # ── spend helpers ─────────────────────────────────────────────────────
 
     def _get_group(self, request: dict) -> str:
-        """Resolve dotted path like 'metadata.team' from request dict."""
         path = self.config.get("group_by", "")
         if not path:
             return "__global__"
@@ -97,23 +93,22 @@ class BudgetPolicy(Policy):
         return str(node) if node else "__global__"
 
     def _get_limit(self, request: dict, group: str) -> float:
-        # flat limit
         if flat := self.config.get("limit"):
             return float(flat)
 
         limits = self.config.get("limits", {})
 
-        # list-style with when: conditions
         if isinstance(limits, list):
+            default_limit = float("inf")
             for entry in limits:
+                if "default" in entry:
+                    default_limit = float(entry["default"])
+                    continue
                 when = entry.get("when", {})
                 if self._matches_when(request, when):
                     return float(entry.get("limit", float("inf")))
-                if "default" in entry:
-                    return float(entry["default"])
-            return float("inf")
+            return default_limit
 
-        # dict-style: {group_value: limit, default: limit}
         if isinstance(limits, dict):
             return float(limits.get(group, limits.get("default", float("inf"))))
 
@@ -137,24 +132,25 @@ class BudgetPolicy(Policy):
             return now.strftime("%Y-%m-%d")
         if reset == "weekly":
             return now.strftime("%Y-W%W")
-        return now.strftime("%Y-%m")   # monthly (default)
+        return now.strftime("%Y-%m")
 
     def _get_spend(self, group: str) -> float:
-        return self._spend.get(group, {}).get(self._current_period(), 0.0)
+        with self._lock:
+            return self._spend.get(group, {}).get(self._current_period(), 0.0)
 
     def _add_spend(self, group: str, amount: float):
         period = self._current_period()
-        if group not in self._spend:
-            self._spend[group] = {}
-        self._spend[group][period] = self._spend[group].get(period, 0.0) + amount
+        with self._lock:
+            if group not in self._spend:
+                self._spend[group] = {}
+            self._spend[group][period] = self._spend[group].get(period, 0.0) + amount
 
-    # ── public helpers ────────────────────────────────────────────────────────
+    # ── public helpers ────────────────────────────────────────────────────
 
     def get_spend(self, group: str = "__global__") -> float:
-        """Query current spend for a group — useful for dashboards/debugging."""
         return self._get_spend(group)
 
     def get_all_spend(self) -> dict:
-        """Return all tracked spend for the current period."""
         period = self._current_period()
-        return {group: periods.get(period, 0.0) for group, periods in self._spend.items()}
+        with self._lock:
+            return {group: periods.get(period, 0.0) for group, periods in self._spend.items()}

@@ -57,9 +57,33 @@ def evaluate_rule(rule: CustomRule, data: dict) -> bool:
             value = data.get(response_key)
             if not match_value(value, matchers):
                 return False
+        elif field_path.startswith("run."):
+            value = _resolve_run_field(field_path)
+            if not match_value(value, matchers):
+                return False
         else:
             value = resolve_field(data, field_path)
             if not match_value(value, matchers):
                 return False
 
     return True
+
+
+def _resolve_run_field(field_path: str):
+    """Resolve run.* fields from the current RunState or active Run."""
+    from aiwarden.session import _current_run
+    state = _current_run.get()
+    if state is None:
+        return None
+
+    field_name = field_path.replace("run.", "", 1)
+    if field_name == "turns":
+        return state.turn
+    elif field_name == "cost":
+        return state.total_cost
+    elif field_name == "tools_count":
+        return len(state.tools_called)
+    elif field_name == "duration":
+        import time
+        return time.monotonic() - state.start_time
+    return None

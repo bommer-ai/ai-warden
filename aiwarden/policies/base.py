@@ -52,6 +52,7 @@ class Policy(ABC):
         self.hooks: list[str] = self.config.get("hooks", self.default_hooks)
         if "priority" in self.config:
             self.priority = int(self.config["priority"])
+        self.agents: list[str] = self.config.get("agents", [])
 
     def pre(self, request: dict) -> tuple[dict, Optional["Block | Warn"]]:
         return request, None

@@ -51,12 +51,22 @@ def get_run_state(kwargs: dict, messages: list) -> RunState:
     Get (or create) the RunState for this create() call.
 
     Priority:
-      1. _run_id in kwargs → user override, always wins
+      0. Hot mode (aiwarden.run() wrapper set it) → use directly
+      1. _run_id in kwargs → user override
       2. OTel trace_id → if changed from last seen, start new run
       3. ContextVar + turn==0 → fallback for no-OTel environments
     """
-    # 1. User override
-    if explicit_id := kwargs.get("_run_id"):
+    # 0. Hot mode — if aiwarden.run() wrapper is active, use its RunState directly
+    from aiwarden.runner import get_current_run
+    if get_current_run() is not None:
+        state = _current_run.get()
+        if state is not None:
+            return state
+
+    # 1. User override via configurable field
+    from aiwarden import config
+    run_id_field = getattr(config, "RUN_ID_FIELD", "_run_id")
+    if explicit_id := kwargs.get(run_id_field):
         return _ensure_run(str(explicit_id))
 
     # 2. OTel trace — use as change-detection signal
@@ -122,9 +132,14 @@ def _new_run() -> RunState:
 
 def _ensure_run(run_id: str) -> RunState:
     """Get existing state if run_id matches, or create new with given id."""
+    import logging
+    log = logging.getLogger(__name__)
     state = _current_run.get()
     if state and state.run_id == run_id:
         return state
+    if state and state.run_id != run_id:
+        log.debug("[aiwarden] run_id changed '%s' → '%s' (previous state: %d turns, $%.4f cost)",
+                 state.run_id, run_id, state.turn, state.total_cost)
     state = RunState(run_id=run_id)
     _current_run.set(state)
     return state

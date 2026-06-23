@@ -8,7 +8,7 @@ ai-warden ships with five policy types. All configured via YAML — no code need
 
 | Type | Priority | Phase | What it governs |
 |------|----------|-------|-----------------|
-| [`budget`](budget.md) | 10 | pre (enforce) + post (record cost) | Spend over time (per team, per agent, global) |
+| [`budget`](budget.md) | 10 | pre | Spend over time (per team, per agent, global) |
 | [`agent_control`](agent-control.md) | 15 | pre | The run itself (turns, cost, duration, loops) |
 | [`custom`](custom.md) | 20 | pre + post | Anything — declarative rules on any field |
 | [`tools`](tools.md) | 50 | post | Tool calls (which tools, what arguments) |

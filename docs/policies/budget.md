@@ -1,6 +1,6 @@
 # Budget Control
 
-**Type:** `budget` | **Priority:** 10 | **Hooks:** pre + post | **Default:** Disabled
+**Type:** `budget` | **Priority:** 10 | **Hooks:** pre | **Default:** Disabled
 
 Tracks LLM spend over time and blocks requests when a budget limit is exceeded. The LLM is never called when the budget is exhausted — zero tokens, zero cost, zero latency.
 
@@ -8,10 +8,10 @@ Tracks LLM spend over time and blocks requests when a budget limit is exceeded. 
 
 ## How it works
 
-1. **Pre-hook (enforcement):** Checks accumulated spend against the limit. If `spend >= limit`, blocks the request. The LLM is never called.
-2. **Post-hook (bookkeeping):** After the LLM responds, reads token counts from the response, computes the actual dollar cost, and increments the spend counter. This is not enforcement — it's updating the running total so the next pre-hook has accurate data.
+1. **Every LLM call:** ai-warden automatically computes the dollar cost from the response's token counts and updates the spend counter. This happens at the system level — no policy configuration needed.
+2. **Pre-hook (enforcement):** Before each LLM call, checks accumulated spend against the limit. If `spend >= limit`, blocks the request. The LLM is never called.
 
-Only the pre-hook makes decisions. The post-hook is an implementation detail: cost can only be computed after the call completes (because completion tokens are unknown beforehand), so the spend counter updates in post.
+Cost tracking is not a policy concern — it's built into ai-warden's core. The budget policy only decides whether to block based on the accumulated total.
 
 Cost is computed from model-specific pricing (input tokens + output tokens). Pricing can be customized via `AIWARDEN_PRICING_FILE`.
 

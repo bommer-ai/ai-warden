@@ -1,10 +1,9 @@
 """
 Budget policy — tracks LLM spend and blocks requests when budget is exceeded.
 
-NOTE: Spend is tracked in-memory within this process only. In multi-process
-deployments (gunicorn workers, Kubernetes pods), each process has independent
-spend tracking. For distributed enforcement, implement a custom BudgetPolicy
-subclass that writes to Redis or a shared database.
+Supports distributed enforcement across pods/processes via Redis.
+Set AIWARDEN_REDIS_URL to enable shared budget tracking.
+Without Redis, falls back to per-process in-memory tracking.
 """
 import logging
 import threading
@@ -12,6 +11,7 @@ from datetime import datetime, timezone
 from typing import Optional
 
 from aiwarden.policies.base import Block, Policy
+from aiwarden.policies.builtin._distributed_tracker import DistributedSpendTracker
 
 log = logging.getLogger(__name__)
 
@@ -38,17 +38,19 @@ class BudgetPolicy(Policy):
 
     def __init__(self, config: dict = None):
         super().__init__(config)
-        self._spend: dict[str, dict[str, float]] = {}
+        reset_period = (config or {}).get("reset", "monthly")
+        self._tracker = DistributedSpendTracker(reset_period=reset_period)
         self._lock = threading.Lock()
 
     def pre(self, request: dict) -> tuple[dict, Optional[Block]]:
         group = self._get_group(request)
         limit = self._get_limit(request, group)
-        spend = self._get_spend(group)
+        key = self._budget_key(group)
+        allowed, spend = self._tracker.check_budget(key, limit)
 
         log.debug("[aiwarden] budget check — group=%s spend=%.4f limit=%.2f", group, spend, limit)
 
-        if spend >= limit:
+        if not allowed:
             return request, Block(
                 f"Budget exceeded for '{group}': ${spend:.4f} / ${limit:.2f} "
                 f"({self.config.get('reset', 'monthly')})"
@@ -73,11 +75,18 @@ class BudgetPolicy(Policy):
                 )
                 cost = compute_cost(model, prompt_tokens, completion_tokens)
                 group = self._get_group(request)
-                self._add_spend(group, cost)
+                key = self._budget_key(group)
+                self._tracker.record_spend(key, cost)
                 log.debug("[aiwarden] budget recorded — group=%s cost=%.6f", group, cost)
         except Exception as e:
             log.error("[aiwarden] budget post() error: %s", e)
         return response
+
+    # ── key generation ────────────────────────────────────────────────────
+
+    def _budget_key(self, group: str) -> str:
+        period = self._current_period()
+        return f"aiwarden:budget:{group}:{period}"
 
     # ── spend helpers ─────────────────────────────────────────────────────
 
@@ -134,23 +143,21 @@ class BudgetPolicy(Policy):
             return now.strftime("%Y-W%W")
         return now.strftime("%Y-%m")
 
-    def _get_spend(self, group: str) -> float:
-        with self._lock:
-            return self._spend.get(group, {}).get(self._current_period(), 0.0)
-
-    def _add_spend(self, group: str, amount: float):
-        period = self._current_period()
-        with self._lock:
-            if group not in self._spend:
-                self._spend[group] = {}
-            self._spend[group][period] = self._spend[group].get(period, 0.0) + amount
-
     # ── public helpers ────────────────────────────────────────────────────
 
     def get_spend(self, group: str = "__global__") -> float:
-        return self._get_spend(group)
+        """Return current spend for a group in the current period."""
+        key = self._budget_key(group)
+        return self._tracker.get_spend(key)
 
     def get_all_spend(self) -> dict:
+        """Return spend for all groups in the current period."""
         period = self._current_period()
-        with self._lock:
-            return {group: periods.get(period, 0.0) for group, periods in self._spend.items()}
+        prefix = f"aiwarden:budget:"
+        all_spend = self._tracker.get_all_spend(prefix)
+        result = {}
+        for k, v in all_spend.items():
+            if k.endswith(f":{period}"):
+                group = k.removeprefix(prefix).removesuffix(f":{period}")
+                result[group] = v
+        return result

@@ -8,7 +8,7 @@ from aiwarden import config
 from aiwarden.capture import capture
 from aiwarden.cost import compute_cost
 from aiwarden.event import LLMEvent, PolicyResult
-from aiwarden.session import get_run_state, increment_turn, mark_run_completed, record_cost, record_tool
+from aiwarden.session import get_run_state, increment_turn, record_cost, record_tool
 from aiwarden.tags import get_tags
 
 
@@ -58,10 +58,6 @@ def build_and_capture(
         for tc in tool_calls:
             record_tool(run_state, tc.get("name", ""))
 
-        # Mark run completed when agent loop ends
-        _TERMINAL_REASONS = {"end_turn", "stop", "stop_sequence"}
-        if finish_reason in _TERMINAL_REASONS and not tool_calls:
-            mark_run_completed(run_state)
 
         # Policies
         all_fired = (pre_fired or []) + (post_fired or [])

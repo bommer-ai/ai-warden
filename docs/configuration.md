@@ -1,0 +1,248 @@
+# Configuration
+
+ai-warden is configured through a YAML policy file and environment variables. No code changes required.
+
+---
+
+## Policy file discovery
+
+ai-warden looks for a policy file in this order:
+
+| Priority | Location | Use case |
+|----------|----------|----------|
+| 1 | `AIWARDEN_POLICY_FILE` env var | CI/CD, containerized deployments |
+| 2 | `.aiwarden/policies.yaml` | Project-level (committed to repo) |
+| 3 | `~/.aiwarden/policies.yaml` | User-level defaults |
+| 4 | Built-in defaults | PII + Tool Safety enabled |
+
+The first file found wins. Files are not merged across levels.
+
+!!! tip "Team configuration"
+    Commit `.aiwarden/policies.yaml` to your repo. Every developer gets the same policy set without per-machine setup.
+
+---
+
+## Policy YAML structure
+
+```yaml
+policies:
+  - name: string              # required — unique identifier
+    type: string              # required — pii, tools, budget, agent_control, custom, module
+    enabled: true             # optional — disable without removing
+    priority: 100             # optional — lower = runs first
+    agents: ["agent-name"]    # optional — scope to specific agents
+    hooks: ["pre", "post"]    # optional — override which phases run
+    # ... type-specific fields below
+```
+
+### Complete example
+
+```yaml
+policies:
+  # Redact PII from all requests
+  - name: pii-protection
+    type: pii
+    patterns:
+      employee_id: "\\bEMP-\\d{6}\\b"
+
+  # Team budget with monthly reset
+  - name: team-budgets
+    type: budget
+    group_by: metadata.team
+    limits:
+      engineering: 500.00
+      support: 100.00
+      default: 50.00
+    reset: monthly
+
+  # Per-run safety limits
+  - name: agent-limits
+    type: agent_control
+    max_turns: 50
+    max_cost: 10.00
+    max_tool_repeats: 3
+
+  # Block dangerous commands
+  - name: tool-safety
+    type: tools
+    builtin:
+      filesystem-safety: true
+      no-privilege-escalation: true
+      safe-git: true
+    rules:
+      - name: no-docker-rm
+        action: refusal
+        message: "Docker removal not allowed."
+        match:
+          tool: bash
+          command:
+            contains: "docker rm"
+
+  # Custom business rules
+  - name: model-restrictions
+    type: custom
+    rules:
+      - name: no-opus-in-dev
+        hook: pre
+        action: block
+        message: "Claude Opus restricted to production."
+        match:
+          model:
+            contains: "opus"
+        when:
+          metadata.environment:
+            not_equals: production
+```
+
+---
+
+## Environment variables
+
+| Variable | Default | Description |
+|----------|---------|-------------|
+| `AIWARDEN_ENABLED` | `true` | Kill switch. Set to `false` to disable all policy enforcement. |
+| `AIWARDEN_DEBUG` | `false` | Print every event to stdout as it fires. |
+| `AIWARDEN_LOG_FILE` | `~/.aiwarden/events.jsonl` | Path for the JSONL event log. |
+| `AIWARDEN_POLICY_FILE` | — | Override policy file path. |
+| `AIWARDEN_AGENT_NAME` | `default` | Default agent name for all calls in this process. |
+| `AIWARDEN_CALLER_TRACKING` | `true` | Stack-walk to capture caller file/line (~0.1ms overhead). |
+| `AIWARDEN_RUN_ID_FIELD` | `_run_id` | Which request kwarg to use as an explicit run ID. |
+| `AIWARDEN_PRICING_FILE` | — | Custom model pricing YAML (overrides built-in prices). |
+| `AIWARDEN_REDIS_URL` | — | Redis URL for distributed budget tracking. |
+
+---
+
+## Programmatic configuration
+
+For applications that need runtime configuration (before the first LLM call):
+
+```python
+import aiwarden
+
+aiwarden.configure(
+    enabled=True,
+    debug=False,
+    log_file="/var/log/myapp/aiwarden.jsonl",
+    agent_name="my-service",
+)
+```
+
+!!! warning
+    `configure()` must be called before the first LLM call. After policies are loaded, configuration is frozen.
+
+---
+
+## Custom model pricing
+
+Cost tracking uses built-in pricing for common models. Override with your own:
+
+```yaml
+# custom_pricing.yaml
+my-fine-tuned-model:
+  prompt: 0.01
+  completion: 0.05
+
+gpt-4o-2024-08-06:
+  prompt: 0.0025
+  completion: 0.01
+
+claude-sonnet-4-6:
+  prompt: 0.003
+  completion: 0.015
+```
+
+```bash
+export AIWARDEN_PRICING_FILE=./custom_pricing.yaml
+```
+
+Pricing format: `{model_name: {prompt: $/1K tokens, completion: $/1K tokens}}`.
+
+---
+
+## Disabling for environments
+
+### Disable entirely
+
+```bash
+export AIWARDEN_ENABLED=false
+```
+
+### Disable specific policies
+
+```yaml
+policies:
+  - name: pii-protection
+    type: pii
+    enabled: false    # disabled but kept in config
+```
+
+### Disable for tests
+
+In your test setup:
+
+```python
+import aiwarden
+aiwarden.configure(enabled=False)
+```
+
+Or via env:
+
+```bash
+AIWARDEN_ENABLED=false pytest
+```
+
+---
+
+## Underscore-prefix convention
+
+Any kwarg starting with `_` is captured by ai-warden and stripped before reaching the LLM API:
+
+```python
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    messages=messages,
+    _agent="chatbot",       # used by ai-warden for agent filtering
+    _run_id="task-123",     # used for run correlation
+    metadata={"team": "eng"},  # passed through to API + used by policies
+)
+```
+
+The LLM provider never sees `_agent` or `_run_id`. This is how you pass control information to ai-warden without breaking the SDK contract.
+
+---
+
+## Event log format
+
+Events are written as newline-delimited JSON to `AIWARDEN_LOG_FILE`:
+
+```json
+{
+  "type": "llm_call",
+  "timestamp": "2026-06-24T10:30:00Z",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "prompt_tokens": 1200,
+  "completion_tokens": 450,
+  "cost": 0.0105,
+  "latency_ms": 2340,
+  "run_id": "abc123",
+  "turn": 3,
+  "agent": "chatbot",
+  "policies": [
+    {"name": "budget-cap", "action": "pass"},
+    {"name": "pii-protection", "action": "warn", "reason": "email redacted"}
+  ],
+  "tags": {"team": "engineering"}
+}
+```
+
+---
+
+## File locations summary
+
+| Path | Purpose |
+|------|---------|
+| `.aiwarden/policies.yaml` | Project-level policy config (commit to repo) |
+| `~/.aiwarden/policies.yaml` | User-level defaults |
+| `~/.aiwarden/events.jsonl` | Event log (append-only) |
+| `AIWARDEN_PRICING_FILE` | Custom model pricing |

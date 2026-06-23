@@ -1,0 +1,83 @@
+# Multi-Agent
+
+Different agents, different rules. One config file.
+
+## Scope policies to agents
+
+```yaml
+policies:
+  # Global — applies to ALL agents
+  - name: pii-protection
+    type: pii
+
+  # Chatbot only
+  - name: chatbot-budget
+    type: budget
+    agents: ["chatbot"]
+    limit: 50.00
+    reset: daily
+
+  # Payment bot — strict controls
+  - name: payment-limits
+    type: agent_control
+    agents: ["payment-bot"]
+    max_turns: 5
+    max_cost: 0.50
+```
+
+## Set the agent name
+
+=== "Environment variable"
+
+    ```bash
+    # One agent per process — simplest
+    export AIWARDEN_AGENT_NAME=chatbot
+    python my_agent.py
+    ```
+
+=== "Context manager"
+
+    ```python
+    import aiwarden
+
+    # Multiple agents in same process
+    with aiwarden.agent("chatbot"):
+        chatbot.run(task)
+
+    with aiwarden.agent("payment-bot"):
+        payment.run(task)
+    ```
+
+=== "Hot mode"
+
+    ```python
+    import aiwarden
+
+    with aiwarden.run(agent="chatbot") as r:
+        chatbot.run(task)
+    # r.cost, r.turns, r.status available
+    ```
+
+## How scoping works
+
+| Config | Effect |
+|--------|--------|
+| No `agents` field | Applies to **all** agents |
+| `agents: ["chatbot"]` | Only when agent = "chatbot" |
+| No agent name set by user | Only global policies run |
+
+## Parallel agents
+
+Each async task gets its own isolated scope:
+
+```python
+async def handle_request():
+    await asyncio.gather(
+        run_with_agent("search-agent", search_task),
+        run_with_agent("payment-bot", payment_task),
+    )
+
+async def run_with_agent(name, task):
+    with aiwarden.agent(name):
+        await agent.execute(task)
+```

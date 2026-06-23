@@ -1,57 +1,136 @@
 # ai-warden
 
-**Governance middleware for LLM agents.**  
-Budget control. PII protection. Tool safety. One import. Zero code changes.
+**Policy enforcement and observability for LLM agents. Zero code changes.**
+
+ai-warden sits between your application and the LLM API. Every call to `anthropic.messages.create()` or `openai.chat.completions.create()` is automatically intercepted, governed by your policies, and logged — without modifying a single line of your code.
 
 ---
+
+## Install
 
 ```bash
-pip install aiwarden
+pip install ai-warden
 ```
 
-```python
-import aiwarden
+That's it. Your agents are now protected. PII is redacted, dangerous tools are blocked, and every LLM call is logged to `~/.aiwarden/events.jsonl`.
 
-# That's it. Every LLM call is now governed.
-# PII redacted. Budgets enforced. Tools monitored.
-```
+!!! note "Zero code changes"
+    ai-warden patches the Anthropic and OpenAI SDKs at import time via a `.pth` file. No decorators, no wrappers, no configuration required for basic protection.
 
 ---
 
-## What it does
+## Quick start
 
-| Problem | ai-warden solves it |
-|---------|-------------------|
-| Agent burns $500 overnight | Budget caps per agent, team, or user |
-| PII leaks to LLM APIs | Regex + custom pattern redaction before the call |
-| Agent calls dangerous tools | Block `rm -rf`, `sudo`, file writes — declaratively |
-| No visibility into agent runs | Every call logged with cost, latency, tools used |
-| Different agents need different rules | Per-agent policy scoping via YAML |
+### 1. Create a policy file
+
+Create `.aiwarden/policies.yaml` in your project root:
+
+```yaml
+policies:
+  - name: pii-protection
+    type: pii
+
+  - name: budget-cap
+    type: budget
+    limit: 50.00
+    reset: daily
+
+  - name: tool-safety
+    type: tools
+    builtin:
+      filesystem-safety: true
+      no-privilege-escalation: true
+      safe-git: true
+```
+
+### 2. Run your agent as normal
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+ai-warden enforces automatically. If the agent tries to exceed its budget, the call is blocked before tokens are spent. If it tries to run `rm -rf /`, the response is replaced with a refusal message.
+
+### 3. See what happened
+
+```bash
+tail -1 ~/.aiwarden/events.jsonl | python -m json.tool
+```
+
+Every LLM call is logged: model, tokens, cost, latency, which policies fired, whether anything was blocked.
+
+---
 
 ## How it works
 
 ```
-Your code → client.messages.create()
-                    ↓
-            ┌── ai-warden ──┐
-            │  PRE-HOOKS     │  ← budget check, PII redact, custom rules
-            │  LLM CALL      │  ← actual API request
-            │  POST-HOOKS    │  ← tool blocking, response filtering
-            │  CAPTURE       │  ← event logged (non-blocking)
-            └────────────────┘
-                    ↓
-            Response to your agent
+Your Code → client.messages.create(**kwargs)
+                    │
+                    ▼
+            ┌─── PRE-HOOKS ───┐
+            │ [10] Budget      │ ← cheapest check first
+            │ [15] Agent ctrl  │
+            │ [20] Custom      │
+            │ [90] PII redact  │ ← expensive, runs last
+            └──────────────────┘
+                    │
+                    ▼ (blocked? → PolicyViolationError, LLM never called)
+                    │
+              LLM API call
+                    │
+                    ▼
+            ┌── POST-HOOKS ───┐
+            │ [50] Tools       │ ← intercepts dangerous tool calls
+            │ [10] Budget      │ ← records actual cost
+            └──────────────────┘
+                    │
+                    ▼
+            Response returned to your code
 ```
 
-## Supports
+**Pre-hooks** fire before the LLM call — they can block, modify, or redact the request.
+**Post-hooks** fire after — they intercept tool calls and record metrics.
 
-- **Anthropic** (Claude) — sync, async, streaming, beta
-- **OpenAI** (GPT) — sync, streaming
-- **Any Python agent framework** — LangChain, CrewAI, AutoGen, custom
+A blocked request never reaches the LLM: zero tokens consumed, zero cost, zero latency.
 
-## Quick links
+---
 
-- [5-minute Quickstart](getting-started/quickstart.md)
-- [Set cost budgets](guides/budget.md)
-- [Write custom policies](guides/custom-policies.md)
-- [Multi-agent setup](guides/multi-agent.md)
+## What's included
+
+| Policy | What it does | Default |
+|--------|-------------|---------|
+| [**PII Protection**](policies/pii.md) | Redacts emails, SSNs, credit cards, API keys before the LLM sees them | Enabled |
+| [**Budget Control**](policies/budget.md) | Spend limits per team/agent with daily/weekly/monthly reset | Disabled |
+| [**Tool Safety**](policies/tools.md) | Blocks dangerous shell commands, file writes, force pushes | Enabled |
+| [**Agent Control**](policies/agent-control.md) | Limits turns, cost, and duration per run. Loop detection. | Disabled |
+| [**Custom Rules**](policies/custom.md) | Declarative rules on any request/response field | Disabled |
+
+---
+
+## Distributed budget enforcement
+
+For multi-process deployments (Kubernetes, Gunicorn workers), enable shared budget tracking via Redis:
+
+```bash
+pip install ai-warden[redis]
+export AIWARDEN_REDIS_URL=redis://your-redis:6379
+```
+
+Budget limits are now enforced across all pods atomically. Without Redis, budgets are tracked per-process.
+
+---
+
+## Next steps
+
+- [Core Concepts](concepts.md) — policies, runs, agents, and how they connect
+- [Built-in Policies](policies/overview.md) — all five policy types explained
+- [Configuration](configuration.md) — YAML structure, env vars, custom pricing
+- [Multi-Agent](multi-agent.md) — different rules for different agents
+- [Examples](examples/single-agent.md) — copy-paste recipes

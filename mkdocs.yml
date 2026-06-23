@@ -1,5 +1,5 @@
 site_name: ai-warden
-site_description: Governance middleware for LLM agents. Budget control, PII protection, tool safety — one import, zero code changes.
+site_description: Governance middleware for LLM agents. Budget control, PII protection, tool safety — zero code changes.
 site_url: https://ai-warden.dev
 
 theme:
@@ -21,33 +21,40 @@ theme:
     - navigation.instant
     - navigation.tabs
     - navigation.sections
+    - navigation.expand
     - content.code.copy
     - content.code.annotate
+    - content.tabs.link
     - search.highlight
   icon:
     repo: fontawesome/brands/github
 
-repo_url: https://github.com/anthropics/ai-warden
+repo_url: https://github.com/bommer-ai/ai-warden
 repo_name: ai-warden
 
 nav:
-  - Home: index.md
-  - Getting Started:
-    - Install: getting-started/install.md
-    - Quickstart: getting-started/quickstart.md
-    - Concepts: getting-started/concepts.md
-  - Guides:
-    - PII Redaction: guides/pii.md
-    - Budget Control: guides/budget.md
-    - Tool Safety: guides/tools.md
-    - Custom Policies: guides/custom-policies.md
-    - Multi-Agent: guides/multi-agent.md
-  - Reference:
-    - Configuration: reference/configuration.md
-    - Python API: reference/python-api.md
-    - Event Schema: reference/events.md
-    - Policy Types: reference/policy-types.md
-  - Architecture: architecture.md
+  - Docs:
+    - Getting Started: index.md
+    - Core Concepts: concepts.md
+    - Built-in Policies:
+      - Overview: policies/overview.md
+      - PII Protection: policies/pii.md
+      - Budget Control: policies/budget.md
+      - Tool Safety: policies/tools.md
+      - Agent Control: policies/agent-control.md
+    - Custom Policies: policies/custom.md
+    - Multi-Agent: multi-agent.md
+    - Hot Mode: hot-mode.md
+    - Configuration: configuration.md
+  - Examples:
+    - Single Agent: examples/single-agent.md
+    - Multi-Agent Budget: examples/multi-agent-budget.md
+    - Custom Rules: examples/custom-rules.md
+  - Advanced:
+    - Architecture: advanced/architecture.md
+    - Run Tracking: advanced/run-tracking.md
+    - Writing a Module Policy: advanced/module-policy.md
+    - Streaming: advanced/streaming.md
 
 markdown_extensions:
   - admonition

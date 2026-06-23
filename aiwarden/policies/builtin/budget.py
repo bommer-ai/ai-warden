@@ -1,10 +1,12 @@
 """
-Budget policy — tracks LLM spend and blocks requests when budget is exceeded.
+Budget policy — blocks requests when accumulated spend exceeds the limit.
+
+Cost recording happens at the system level (engine.record_llm_cost) after every
+LLM call. This policy only needs a pre-hook to check the limit.
 
 NOTE: Spend is tracked in-memory within this process only. In multi-process
 deployments (gunicorn workers, Kubernetes pods), each process has independent
-spend tracking. For distributed enforcement, implement a custom BudgetPolicy
-subclass that writes to Redis or a shared database.
+spend tracking. For distributed enforcement, set AIWARDEN_REDIS_URL.
 """
 import logging
 import threading
@@ -34,7 +36,7 @@ class BudgetPolicy(Policy):
 
     name          = "budget-control"
     priority      = 10
-    default_hooks = ["pre", "post"]
+    default_hooks = ["pre"]
 
     def __init__(self, config: dict = None):
         super().__init__(config)
@@ -55,29 +57,11 @@ class BudgetPolicy(Policy):
             )
         return request, None
 
-    def post(self, request: dict, response: object) -> object:
-        try:
-            from aiwarden.cost import compute_cost
-            model = request.get("model", "")
-            usage = getattr(response, "usage", None)
-            if usage:
-                prompt_tokens = (
-                    getattr(usage, "input_tokens", 0)
-                    or getattr(usage, "prompt_tokens", 0)
-                    or 0
-                )
-                completion_tokens = (
-                    getattr(usage, "output_tokens", 0)
-                    or getattr(usage, "completion_tokens", 0)
-                    or 0
-                )
-                cost = compute_cost(model, prompt_tokens, completion_tokens)
-                group = self._get_group(request)
-                self._add_spend(group, cost)
-                log.debug("[aiwarden] budget recorded — group=%s cost=%.6f", group, cost)
-        except Exception as e:
-            log.error("[aiwarden] budget post() error: %s", e)
-        return response
+    def record_cost(self, request: dict, cost: float):
+        """Called by the engine after every LLM call with the actual cost."""
+        group = self._get_group(request)
+        self._add_spend(group, cost)
+        log.debug("[aiwarden] budget recorded — group=%s cost=%.6f", group, cost)
 
     # ── spend helpers ─────────────────────────────────────────────────────
 

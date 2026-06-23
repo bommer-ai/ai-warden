@@ -101,6 +101,25 @@ class PolicyEngine:
 
         return response, fired
 
+    def record_llm_cost(self, request: dict, model: str, prompt_tokens: int, completion_tokens: int):
+        """
+        Feed actual LLM cost to budget policies after a call completes.
+        Called by the patcher layer — budget policies don't need a post hook.
+        """
+        from aiwarden.cost import compute_cost
+        cost = compute_cost(model, prompt_tokens, completion_tokens)
+        if cost <= 0:
+            return
+        current_agent = _resolve_agent(request)
+        for policy in self._get_policies():
+            if hasattr(policy, "record_cost"):
+                if policy.agents and current_agent not in policy.agents:
+                    continue
+                try:
+                    policy.record_cost(request, cost)
+                except Exception as e:
+                    log.error("[aiwarden] policy '%s' record_cost error: %s", policy.name, e)
+
     def register(self, policy: Policy, first: bool = False) -> "PolicyEngine":
         """Programmatically add a policy."""
         if self._policies is None:

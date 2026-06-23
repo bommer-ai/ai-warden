@@ -65,7 +65,17 @@ def _patched_create(self, *args, **kwargs):
     # 3. POST-HOOKS
     response, post_fired = engine.run_post(kwargs, response)
 
-    # 4. CAPTURE
+    # 4. RECORD COST (feeds budget policies)
+    usage = getattr(response, "usage", None)
+    if usage:
+        engine.record_llm_cost(
+            kwargs,
+            kwargs.get("model", getattr(response, "model", "")),
+            getattr(usage, "prompt_tokens", 0) or 0,
+            getattr(usage, "completion_tokens", 0) or 0,
+        )
+
+    # 5. CAPTURE
     _emit(kwargs, response, latency, streamed=False, pre_fired=pre_fired, post_fired=post_fired)
     return response
 
@@ -133,6 +143,12 @@ class _StreamWrapper:
             )
 
             fake_response, post_fired = engine.run_post(self._kwargs, fake_response)
+            engine.record_llm_cost(
+                self._kwargs,
+                self._kwargs.get("model", ""),
+                getattr(fake_usage, "prompt_tokens", 0) or 0,
+                getattr(fake_usage, "completion_tokens", 0) or 0,
+            )
             latency = int((time.monotonic() - self._start) * 1000)
             _emit(self._kwargs, fake_response, latency, streamed=True,
                   pre_fired=self._pre_fired, post_fired=post_fired)

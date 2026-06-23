@@ -73,7 +73,17 @@ def _patched_create(self, *args, **kwargs):
     # 3. POST-HOOKS
     response, post_fired = engine.run_post(kwargs, response)
 
-    # 4. CAPTURE
+    # 4. RECORD COST (feeds budget policies)
+    usage = getattr(response, "usage", None)
+    if usage:
+        engine.record_llm_cost(
+            kwargs,
+            kwargs.get("model", getattr(response, "model", "")),
+            getattr(usage, "input_tokens", 0) or 0,
+            getattr(usage, "output_tokens", 0) or 0,
+        )
+
+    # 5. CAPTURE
     _emit(kwargs, response, latency, streamed=False, pre_fired=pre_fired, post_fired=post_fired)
     return response
 
@@ -99,6 +109,14 @@ def _patch_async(AsyncMessages):
         latency    = int((time.monotonic() - start) * 1000)
 
         response, post_fired = engine.run_post(kwargs, response)
+        usage = getattr(response, "usage", None)
+        if usage:
+            engine.record_llm_cost(
+                kwargs,
+                kwargs.get("model", getattr(response, "model", "")),
+                getattr(usage, "input_tokens", 0) or 0,
+                getattr(usage, "output_tokens", 0) or 0,
+            )
         _emit(kwargs, response, latency, streamed=False, pre_fired=pre_fired, post_fired=post_fired)
         return response
 
@@ -139,6 +157,14 @@ class _StreamWrapper:
         try:
             final = self._stream.get_final_message()
             final, post_fired = engine.run_post(self._kwargs, final)
+            usage = getattr(final, "usage", None)
+            if usage:
+                engine.record_llm_cost(
+                    self._kwargs,
+                    self._kwargs.get("model", getattr(final, "model", "")),
+                    getattr(usage, "input_tokens", 0) or 0,
+                    getattr(usage, "output_tokens", 0) or 0,
+                )
             latency = int((time.monotonic() - self._start) * 1000)
             _emit(self._kwargs, final, latency, streamed=True,
                   pre_fired=self._pre_fired, post_fired=post_fired)

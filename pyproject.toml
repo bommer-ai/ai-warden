@@ -1,0 +1,28 @@
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "ai-warden"
+version = "0.1.0"
+description = "Policy enforcement and observability for LLM agents. Zero code changes."
+dependencies = [
+    "anthropic>=0.109.1",
+]
+
+[project.optional-dependencies]
+redis = ["redis[hiredis]>=5.0.0"]
+
+[tool.setuptools.packages.find]
+where = ["."]
+include = ["aiwarden*"]
+
+[tool.setuptools.data-files]
+"." = ["aiwarden.pth"]
+
+[dependency-groups]
+dev = [
+    "pytest>=9.1.0",
+    "pyyaml>=6.0.3",
+    "fakeredis[lua]>=2.21.0",
+]

@@ -8,8 +8,10 @@ Tracks LLM spend over time and blocks requests when a budget limit is exceeded. 
 
 ## How it works
 
-1. **Pre-hook:** Checks accumulated spend against the limit. If `spend >= limit`, blocks the request.
-2. **Post-hook:** After the LLM responds, computes the actual cost from token usage and records it.
+1. **Pre-hook (enforcement):** Checks accumulated spend against the limit. If `spend >= limit`, blocks the request. The LLM is never called.
+2. **Post-hook (bookkeeping):** After the LLM responds, reads token counts from the response, computes the actual dollar cost, and increments the spend counter. This is not enforcement — it's updating the running total so the next pre-hook has accurate data.
+
+Only the pre-hook makes decisions. The post-hook is an implementation detail: cost can only be computed after the call completes (because completion tokens are unknown beforehand), so the spend counter updates in post.
 
 Cost is computed from model-specific pricing (input tokens + output tokens). Pricing can be customized via `AIWARDEN_PRICING_FILE`.
 

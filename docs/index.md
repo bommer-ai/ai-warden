@@ -104,13 +104,16 @@ A blocked request never reaches the LLM: zero tokens consumed, zero cost, zero l
 
 ## What's included
 
-| Policy | What it does | Default |
-|--------|-------------|---------|
-| [**PII Protection**](policies/pii.md) | Redacts emails, SSNs, credit cards, API keys before the LLM sees them | Enabled |
-| [**Budget Control**](policies/budget.md) | Spend limits per team/agent with daily/weekly/monthly reset | Disabled |
-| [**Tool Safety**](policies/tools.md) | Blocks dangerous shell commands, file writes, force pushes | Enabled |
-| [**Agent Control**](policies/agent-control.md) | Limits turns, cost, and duration per run. Loop detection. | Disabled |
-| [**Custom Rules**](policies/custom.md) | Declarative rules on any request/response field | Disabled |
+| Policy | What it does | Default | Disable with |
+|--------|-------------|---------|--------------|
+| [**PII Protection**](policies/pii.md) | Redacts emails, SSNs, credit cards, API keys before the LLM sees them | Enabled | `enabled: false` |
+| [**Tool Safety**](policies/tools.md) | Blocks dangerous shell commands, file writes, force pushes | Enabled | `enabled: false` |
+| [**Budget Control**](policies/budget.md) | Spend limits per team/agent with daily/weekly/monthly reset | Disabled | — |
+| [**Agent Control**](policies/agent-control.md) | Limits turns, cost, and duration per run. Loop detection. | Disabled | — |
+| [**Custom Rules**](policies/custom.md) | Declarative rules on any request/response field | Disabled | — |
+
+!!! note "Defaults apply only when no policy file exists"
+    Once you create `.aiwarden/policies.yaml`, only the policies listed in it are active. See [Configuration](configuration.md#default-enabled-policies) for details.
 
 ---
 

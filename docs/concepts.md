@@ -147,15 +147,17 @@ Each run has:
 
 ### Automatic detection
 
-ai-warden detects run boundaries automatically from:
+ai-warden detects run boundaries automatically using deterministic signals:
 
-1. OpenTelemetry trace context changes
-2. `_run_id` kwarg in the request
-3. Message pattern heuristics (new user message with no history = new run)
+1. **OpenTelemetry trace context** — a new `trace_id` means a new run; same trace continues the existing run
+2. **Explicit `_run_id` kwarg** — your code passes a run identifier directly
+3. **Conversation structure** — first turn (no assistant messages in history) signals a new run; subsequent turns with assistant messages continue the current run
+
+These are not guesses — each signal is deterministic. The `.create()` call's message history reliably indicates whether this is a new conversation or a continuation.
 
 ### Explicit runs (Hot Mode)
 
-For precise control, use `aiwarden.run()`:
+For additional tracking (duration, parent-child topology, run summaries), use `aiwarden.run()`:
 
 ```python
 import aiwarden
@@ -170,9 +172,9 @@ print(r.turns)   # 2
 print(r.status)  # "completed"
 ```
 
-Hot mode gives you:
+Hot mode adds:
 
-- Exact run boundaries (no heuristic detection)
+- Explicit run boundaries (overrides automatic detection)
 - Duration tracking
 - Parent-child topology (nested runs)
 - Run summary events in the log
@@ -227,7 +229,7 @@ Events are written asynchronously by a background thread — zero impact on your
 
 | Mode | Setup | What you get |
 |------|-------|-------------|
-| **Zero-touch** | `pip install ai-warden` + YAML | Auto-enforcement, per-call events, budget tracking |
-| **Hot Mode** | Add `aiwarden.run()` to your code | + exact run boundaries, duration, parent-child topology, run summaries |
+| **Zero-touch** | `pip install ai-warden` + YAML | Auto-enforcement, per-call events, budget tracking, automatic run detection |
+| **Hot Mode** | Add `aiwarden.run()` to your code | + explicit run boundaries, duration, parent-child topology, run summaries |
 
-Most users start with zero-touch. Add hot mode when you need precise per-task metrics or multi-agent tracking.
+Most users start with zero-touch — run detection works automatically from OTel traces and conversation structure. Add hot mode when you need explicit run boundaries or parent-child agent topology.

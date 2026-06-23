@@ -159,21 +159,46 @@ Pricing format: `{model_name: {prompt: $/1K tokens, completion: $/1K tokens}}`.
 
 ---
 
-## Disabling for environments
+## Disabling policies
 
-### Disable entirely
+### Default-enabled policies
+
+When no policy file exists, ai-warden enables **PII Protection** and **Tool Safety** by default. To disable them, create a policy file and explicitly set `enabled: false`:
+
+```yaml
+policies:
+  # Disable PII redaction (enabled by default)
+  - name: pii-protection
+    type: pii
+    enabled: false
+
+  # Disable tool safety (enabled by default)
+  - name: tool-safety
+    type: tools
+    enabled: false
+
+  # Keep only what you need
+  - name: budget
+    type: budget
+    limit: 100.00
+    reset: monthly
+```
+
+Once you create a `.aiwarden/policies.yaml` file, only the policies listed in it are active. The defaults no longer apply.
+
+### Disable ai-warden entirely
 
 ```bash
 export AIWARDEN_ENABLED=false
 ```
 
-### Disable specific policies
+### Disable specific policies without removing them
 
 ```yaml
 policies:
   - name: pii-protection
     type: pii
-    enabled: false    # disabled but kept in config
+    enabled: false    # stays in config, does not run
 ```
 
 ### Disable for tests

@@ -38,6 +38,7 @@ class RunState:
     start_time: float = field(default_factory=_time.monotonic)
     total_cost: float = 0.0
     tools_called: list = field(default_factory=list)
+    completed: bool = False
 
 
 _current_run: ContextVar[RunState | None] = ContextVar("aiwarden_run", default=None)
@@ -78,14 +79,18 @@ def get_run_state(kwargs: dict, messages: list) -> RunState:
             _last_otel_trace.set(otel_id)
             return _new_run()
         else:
-            # Same trace → same run
+            # Same trace → same run (unless previous run completed)
             state = _current_run.get()
-            if state:
+            if state and not state.completed:
                 return state
             return _new_run()
 
-    # 3. No OTel — use turn==0 heuristic
+    # 3. No OTel — use conversation structure
     state = _current_run.get()
+
+    if state is not None and state.completed:
+        return _new_run()
+
     has_assistant = any(m.get("role") == "assistant" for m in messages)
 
     if state is None or not has_assistant:
@@ -114,6 +119,11 @@ def record_cost(state: RunState, cost: float):
 def record_tool(state: RunState, tool_name: str):
     """Record a tool invocation."""
     state.tools_called.append(tool_name)
+
+
+def mark_run_completed(state: RunState):
+    """Mark the current run as completed. Next create() call starts a new run."""
+    state.completed = True
 
 
 def compute_turn(messages: list) -> int:

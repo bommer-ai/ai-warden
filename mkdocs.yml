@@ -1,0 +1,69 @@
+site_name: ai-warden
+site_description: Governance middleware for LLM agents. Budget control, PII protection, tool safety — zero code changes.
+site_url: https://ai-warden.dev
+
+theme:
+  name: material
+  palette:
+    - scheme: slate
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-4
+        name: Switch to light mode
+    - scheme: default
+      primary: deep purple
+      accent: amber
+      toggle:
+        icon: material/brightness-7
+        name: Switch to dark mode
+  features:
+    - navigation.instant
+    - navigation.tabs
+    - navigation.sections
+    - navigation.expand
+    - content.code.copy
+    - content.code.annotate
+    - content.tabs.link
+    - search.highlight
+  icon:
+    repo: fontawesome/brands/github
+
+repo_url: https://github.com/bommer-ai/ai-warden
+repo_name: ai-warden
+
+nav:
+  - Docs:
+    - Getting Started: index.md
+    - Core Concepts: concepts.md
+    - Built-in Policies:
+      - Overview: policies/overview.md
+      - PII Protection: policies/pii.md
+      - Budget Control: policies/budget.md
+      - Tool Safety: policies/tools.md
+      - Agent Control: policies/agent-control.md
+    - Custom Policies: policies/custom.md
+    - Multi-Agent: multi-agent.md
+    - Hot Mode: hot-mode.md
+    - Configuration: configuration.md
+  - Examples:
+    - Single Agent: examples/single-agent.md
+    - Multi-Agent Budget: examples/multi-agent-budget.md
+    - Custom Rules: examples/custom-rules.md
+  - Advanced:
+    - Architecture: advanced/architecture.md
+    - Run Tracking: advanced/run-tracking.md
+    - Writing a Module Policy: advanced/module-policy.md
+    - Streaming: advanced/streaming.md
+
+markdown_extensions:
+  - admonition
+  - pymdownx.details
+  - pymdownx.superfences
+  - pymdownx.highlight:
+      anchor_linenums: true
+  - pymdownx.tabbed:
+      alternate_style: true
+  - attr_list
+  - md_in_html
+  - tables

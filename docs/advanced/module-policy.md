@@ -1,0 +1,56 @@
+# Writing a Module Policy
+
+For logic that can't be expressed in YAML — rate limiting, external API calls, custom state.
+
+## 1. Write your policy class
+
+```python
+# my_app/policies.py
+from aiwarden.policies.base import Policy, Block, Warn
+
+class RateLimitPolicy(Policy):
+    name = "rate-limit"
+    priority = 5
+    default_hooks = ["pre"]
+
+    def __init__(self, config=None):
+        super().__init__(config)
+        self._count = 0
+        self._max = self.config.get("max_per_minute", 60)
+
+    def pre(self, request):
+        self._count += 1
+        if self._count > self._max:
+            return request, Block(f"Rate limit: {self._count}/{self._max}")
+        return request, None
+```
+
+## 2. Reference it in YAML
+
+```yaml
+policies:
+  - name: my-rate-limiter
+    type: module
+    module: my_app.policies.RateLimitPolicy
+    priority: 5
+    max_per_minute: 30
+```
+
+## Key points
+
+- Your class must subclass `Policy`
+- `config` dict contains all YAML keys (access via `self.config`)
+- `pre()` returns `(request, Block | Warn | None)`
+- `post()` returns `response` (or `(response, Warn)`)
+- Module is imported once (Python caches it) — no per-call import overhead
+- Invalid module paths are logged and skipped — never crash your app
+
+## When to use module vs custom
+
+| Need | Use |
+|------|-----|
+| Match a field value | `type: custom` (YAML rule) |
+| Rate limiting with sliding window | `type: module` (needs state + timing) |
+| Call an external API for validation | `type: module` (needs network call) |
+| Check a feature flag service | `type: module` (needs external state) |
+| Simple condition on request fields | `type: custom` (YAML rule) |

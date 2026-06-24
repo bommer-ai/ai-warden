@@ -1,0 +1,52 @@
+# Run Tracking
+
+How ai-warden identifies which LLM calls belong to the same agent run.
+
+## Detection priority
+
+| Priority | Source | When it works |
+|----------|--------|--------------|
+| 1 | Hot mode (`aiwarden.run()`) | Always — wrapper sets it explicitly |
+| 2 | OpenTelemetry trace_id | Production apps with OTel instrumented |
+| 3 | ContextVar heuristic | Scripts, dev — fresh messages = new run |
+
+## How it works (zero-touch)
+
+```
+Call 1: messages = [user_msg]                    → no assistant = NEW run → UUID generated
+Call 2: messages = [user, assistant, tool]       → has assistant = SAME run → same UUID
+Call 3: messages = [user, asst, tool, asst, tool] → has assistant = SAME run → same UUID
+Call 4: messages = [new_user_msg]                → no assistant = NEW run → new UUID
+```
+
+## How it works (hot mode)
+
+```python
+with aiwarden.run(agent="x") as r:
+    # All create() calls use r.id — no heuristics
+    # RunState set in ContextVar — patcher reads it directly
+```
+
+## RunState
+
+Every run has a live state object tracked by the patcher:
+
+```
+RunState:
+  run_id: "abc123"
+  turn: 3             ← incremented on every create() call
+  total_cost: 0.0042  ← accumulated after each response
+  tools_called: [...]  ← recorded after each response
+  start_time: ...     ← monotonic clock
+```
+
+Agent control policies read from this to enforce per-run limits.
+
+## OTel integration
+
+If your app has OpenTelemetry instrumented, ai-warden reads the current trace_id:
+
+- Same trace = same run (even across multiple agents in one request)
+- Trace changes = new run
+
+No configuration needed — if OTel is installed and active, it's used automatically.

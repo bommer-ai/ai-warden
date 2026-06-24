@@ -1,4 +1,8 @@
-# Custom Policies
+---
+icon: material/code-tags
+---
+
+# :material-code-tags: Custom Policies
 
 **Type:** `custom` | **Priority:** 20 | **Hooks:** pre + post | **Default:** Disabled
 
@@ -6,19 +10,7 @@ Create your own policies with declarative rules. Match on any request or respons
 
 ---
 
-## How it works
-
-Custom policies define **rules** — each rule specifies:
-
-1. **When** it applies (hook: pre or post)
-2. **What** to match (fields and operators)
-3. **What to do** (block, warn)
-
-Rules are evaluated in order. The first matching rule determines the action.
-
----
-
-## Basic example
+## :material-lightning-bolt: Quick example
 
 ```yaml
 policies:
@@ -38,78 +30,76 @@ policies:
 
 ---
 
-## Rule fields
+## :material-table: Rule fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Unique rule identifier. Appears in logs and error messages. |
-| `hook` | string | Yes | When to evaluate: `pre` (before LLM call) or `post` (after LLM responds) |
-| `action` | string | Yes | What to do on match: `block` or `warn` |
-| `message` | string | No | Message included in the block error or warn log |
-| `match` | dict | Yes | Field-operator pairs to match against |
-| `when` | dict | No | Additional conditions (metadata, environment) |
+| `name` | string | :material-check: | Rule identifier |
+| `hook` | string | :material-check: | `pre` or `post` |
+| `action` | string | :material-check: | `block` or `warn` |
+| `message` | string | :material-close: | Message in error/log |
+| `match` | dict | :material-check: | Field-operator pairs |
+| `when` | dict | :material-close: | Context conditions |
 
 ---
 
-## Operators
+## :material-format-list-checks: Operators
 
 | Operator | Type | Example | Description |
 |----------|------|---------|-------------|
-| `contains` | string | `{contains: "password"}` | String contains substring |
-| `not_contains` | string | `{not_contains: "approved"}` | String does NOT contain substring |
-| `startswith` | string or list | `{startswith: ["gpt-4", "gpt-3"]}` | Starts with value (or any in list) |
-| `endswith` | string | `{endswith: ".exe"}` | Ends with value |
+| `contains` | string | `{contains: "password"}` | Substring match |
+| `not_contains` | string | `{not_contains: "approved"}` | NOT substring |
+| `startswith` | string/list | `{startswith: ["gpt-4", "gpt-3"]}` | Prefix match |
+| `endswith` | string | `{endswith: ".exe"}` | Suffix match |
 | `equals` | any | `{equals: "production"}` | Exact match |
-| `not_equals` | any | `{not_equals: "test"}` | Not exact match |
-| `in` | list | `{in: ["prod", "staging"]}` | Value is one of the listed items |
-| `not_in` | list | `{not_in: ["dev", "test"]}` | Value is NOT in the list |
-| `regex` | string | `{regex: "(?i)DROP TABLE"}` | Regex match (Python `re` syntax) |
+| `not_equals` | any | `{not_equals: "test"}` | NOT exact |
+| `in` | list | `{in: ["prod", "staging"]}` | Value in list |
+| `not_in` | list | `{not_in: ["dev", "test"]}` | Value NOT in list |
+| `regex` | string | `{regex: "(?i)DROP TABLE"}` | Python regex |
 | `gt` | number | `{gt: 4000}` | Greater than |
 | `lt` | number | `{lt: 100}` | Less than |
-| `gte` | number | `{gte: 1000}` | Greater than or equal |
-| `lte` | number | `{lte: 8192}` | Less than or equal |
+| `gte` | number | `{gte: 1000}` | Greater or equal |
+| `lte` | number | `{lte: 8192}` | Less or equal |
 
-Multiple operators in one match are AND-ed:
-
-```yaml
-match:
-  max_tokens:
-    gt: 4000
-    lte: 16000
-```
-
-This matches when `4000 < max_tokens <= 16000`.
+!!! tip "Multiple operators = AND"
+    ```yaml
+    match:
+      max_tokens:
+        gt: 4000
+        lte: 16000
+    ```
+    Matches when `4000 < max_tokens <= 16000`.
 
 ---
 
-## Matchable fields
+## :material-target: Matchable fields
 
-### Pre-hook (request fields)
+=== ":material-arrow-right: Pre-hook (request)"
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `model` | string | Model name (e.g., `claude-sonnet-4-6`, `gpt-4o`) |
-| `max_tokens` | integer | Maximum tokens requested |
-| `temperature` | float | Sampling temperature |
-| `metadata.{key}` | any | Custom metadata passed in the request |
-| `messages.content` | string | Concatenated message content |
-| `run.turns` | integer | Current turn count in this run |
-| `run.cost` | float | Accumulated cost in this run |
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `model` | string | Model name |
+    | `max_tokens` | integer | Max tokens requested |
+    | `temperature` | float | Sampling temperature |
+    | `metadata.{key}` | any | Custom metadata |
+    | `messages.content` | string | Concatenated message content |
+    | `run.turns` | integer | Current turn count |
+    | `run.cost` | float | Accumulated run cost |
 
-### Post-hook (response fields)
+=== ":material-arrow-left: Post-hook (response)"
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `response.content` | string | Text content of the response |
-| `response.completion_tokens` | integer | Tokens in the response |
-| `response.prompt_tokens` | integer | Tokens in the prompt |
-| `response.finish_reason` | string | Why the response ended |
+    | Field | Type | Description |
+    |-------|------|-------------|
+    | `response.content` | string | Response text |
+    | `response.completion_tokens` | integer | Output tokens |
+    | `response.prompt_tokens` | integer | Input tokens |
+    | `response.finish_reason` | string | Why response ended |
 
 ---
 
-## Conditions with `when`
+## :material-filter: Conditions with `when`
 
-The `when` field adds context-based conditions. Rules only fire when ALL `when` conditions match:
+The `when` field restricts rules to specific contexts:
 
 ```yaml
 rules:
@@ -125,128 +115,89 @@ rules:
         not_equals: production
 ```
 
-`when` supports the same operators as `match`. It evaluates against the request dict using dot-path resolution.
+!!! info "`when` supports the same operators as `match`"
+    It evaluates against the request dict using dot-path resolution.
 
 ---
 
-## Multiple rules
+## :material-check-decagram: Validation
 
-Rules are evaluated in order. Each rule is independent — multiple rules can match the same request:
-
-```yaml
-policies:
-  - name: content-safety
-    type: custom
-    rules:
-      - name: no-opus-for-interns
-        hook: pre
-        action: block
-        message: "Interns cannot use Claude Opus."
-        match:
-          model:
-            contains: "opus"
-        when:
-          metadata.role: intern
-
-      - name: warn-high-tokens
-        hook: pre
-        action: warn
-        message: "High token request — review for necessity."
-        match:
-          max_tokens:
-            gt: 8000
-
-      - name: block-harmful-output
-        hook: post
-        action: block
-        message: "Response contained harmful content."
-        match:
-          response.content:
-            regex: "(?i)(how to (hack|exploit|attack))"
-```
+- :material-check: Invalid rules produce a warning and are skipped
+- :material-check: Your application never crashes due to a bad rule
+- :material-check: Unknown operators are logged and ignored
+- :material-check: Rules validated at load time, not at call time
 
 ---
 
-## Validation
+## :material-code-braces: Examples
 
-Rules are validated at load time:
+=== "Model access control"
 
-- Invalid rules produce a warning log and are skipped
-- Your application never crashes due to a bad rule
-- A rule with no `match` field is skipped
-- Unknown operators are skipped with a warning
+    ```yaml
+    - name: model-access
+      type: custom
+      rules:
+        - name: no-expensive-in-dev
+          hook: pre
+          action: block
+          message: "Use claude-sonnet-4-6 in development."
+          match:
+            model:
+              regex: "(opus|gpt-4-turbo)"
+          when:
+            metadata.environment:
+              in: ["development", "staging"]
+    ```
 
----
+=== "Token limit enforcement"
 
-## Examples
+    ```yaml
+    - name: token-limits
+      type: custom
+      rules:
+        - name: cap-max-tokens
+          hook: pre
+          action: block
+          message: "max_tokens capped at 4096."
+          match:
+            max_tokens:
+              gt: 4096
+    ```
 
-### Model access control
+=== "Content filtering"
 
-```yaml
-- name: model-access
-  type: custom
-  rules:
-    - name: no-expensive-models-dev
-      hook: pre
-      action: block
-      message: "Use claude-sonnet-4-6 in development."
-      match:
-        model:
-          regex: "(opus|gpt-4-turbo)"
-      when:
-        metadata.environment:
-          in: ["development", "staging"]
-```
+    ```yaml
+    - name: output-filter
+      type: custom
+      rules:
+        - name: no-code-generation
+          hook: post
+          action: warn
+          message: "Agent generated code."
+          match:
+            response.content:
+              regex: "```(python|javascript|bash)"
+    ```
 
-### Token limit enforcement
+=== "Turn guard"
 
-```yaml
-- name: token-limits
-  type: custom
-  rules:
-    - name: cap-max-tokens
-      hook: pre
-      action: block
-      message: "max_tokens capped at 4096 for this service."
-      match:
-        max_tokens:
-          gt: 4096
-```
+    ```yaml
+    - name: turn-guard
+      type: custom
+      rules:
+        - name: warn-at-10
+          hook: pre
+          action: warn
+          message: "Agent running 10+ turns."
+          match:
+            run.turns:
+              gte: 10
 
-### Response content filtering
-
-```yaml
-- name: output-filter
-  type: custom
-  rules:
-    - name: no-code-generation
-      hook: post
-      action: warn
-      message: "Agent generated code — review required."
-      match:
-        response.content:
-          regex: "```(python|javascript|bash)"
-```
-
-### Rate limiting by turns
-
-```yaml
-- name: turn-guard
-  type: custom
-  rules:
-    - name: warn-at-turn-10
-      hook: pre
-      action: warn
-      message: "Agent has been running for 10+ turns."
-      match:
-        run.turns:
-          gte: 10
-
-    - name: block-at-turn-20
-      hook: pre
-      action: block
-      message: "Agent exceeded 20 turns. Stopping."
-      match:
-        run.turns:
-          gte: 20
-```
+        - name: block-at-20
+          hook: pre
+          action: block
+          message: "Agent exceeded 20 turns."
+          match:
+            run.turns:
+              gte: 20
+    ```

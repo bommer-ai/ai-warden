@@ -1,24 +1,36 @@
-# Tool Safety
+---
+icon: material/tools
+---
+
+# :material-tools: Tool Safety
 
 **Type:** `tools` | **Priority:** 50 | **Hooks:** post | **Default:** Enabled
 
-Inspects LLM responses for dangerous tool calls and blocks them before your agent executes them. The response is replaced with a refusal message — the agent sees "I'm not allowed to do that" and can try a different approach.
+Inspects LLM responses for dangerous tool calls and blocks them before your agent executes them. The agent sees a refusal message and can try a different approach.
 
 ---
 
-## How it works
+## :material-cog: How it works
 
-1. The LLM responds with `tool_use` blocks (e.g., "call bash with `rm -rf /`")
-2. Tool Safety inspects each tool call against your rules
-3. On match: the response is replaced with a refusal message (or exception raised)
-4. The agent never executes the dangerous command
+```mermaid
+sequenceDiagram
+    participant Agent as Your Agent
+    participant LLM as LLM API
+    participant AW as ai-warden
 
-!!! note "Post-hook only"
-    Tool Safety runs in the post-hook because it inspects the LLM's output (what tool the model wants to call), not the input. The LLM call has already happened — tokens are consumed — but the dangerous action is prevented.
+    Agent->>LLM: "Delete the old logs"
+    LLM-->>AW: tool_use: bash("rm -rf /var/log")
+    AW->>AW: Rule match: filesystem-safety
+    AW-->>Agent: "I'm not allowed to run destructive commands."
+    Note over Agent: Agent retries with safe alternative
+```
+
+!!! info "Post-hook only"
+    Tool Safety runs after the LLM responds because it inspects what tool the model wants to call. The LLM call already happened (tokens consumed), but the dangerous action is prevented.
 
 ---
 
-## Built-in templates
+## :material-shield-star: Built-in templates
 
 Enable pre-built rule sets with a single flag:
 
@@ -35,24 +47,21 @@ policies:
       network-safety: true
 ```
 
-### Template reference
+| Template | Icon | What it blocks |
+|----------|------|----------------|
+| `filesystem-safety` | :material-folder-lock: | `rm -rf`, `rm -fr`, writes to `/etc/`, `/sys/`, `/proc/` |
+| `no-privilege-escalation` | :material-shield-alert: | `sudo`, `su`, `chmod 777`, `chown root` |
+| `safe-git` | :material-source-branch: | `git push --force`, `git reset --hard`, `git clean -f` |
+| `no-credential-access` | :material-key-remove: | Reading `.env`, `.ssh/`, `.aws/credentials` |
+| `no-auto-install` | :material-package-down: | `pip install`, `npm install`, `apt-get install` |
+| `network-safety` | :material-web-off: | Warns on `curl`, `wget`, `nc` (warn, not block) |
 
-| Template | What it blocks |
-|----------|----------------|
-| `filesystem-safety` | `rm -rf`, `rm -fr`, writes to `/etc/`, `/sys/`, `/proc/` |
-| `no-privilege-escalation` | `sudo`, `su`, `chmod 777`, `chown root` |
-| `safe-git` | `git push --force`, `git reset --hard`, `git clean -f` |
-| `no-credential-access` | Reading `.env`, `.ssh/`, `.aws/credentials` |
-| `no-auto-install` | `pip install`, `npm install`, `apt-get install` without confirmation |
-| `network-safety` | Warns on `curl`, `wget`, `nc` (warn action, not block) |
-
-Templates stack — enable as many as you need. Custom rules can be added alongside templates.
+!!! tip "Templates stack"
+    Enable as many as you need. Custom rules work alongside templates.
 
 ---
 
-## Custom rules
-
-Write your own rules for tool-call inspection:
+## :material-pencil-ruler: Custom rules
 
 ```yaml
 policies:
@@ -69,90 +78,78 @@ policies:
         when:
           metadata:
             environment: production
-
-      - name: no-external-fetch
-        action: warn
-        match:
-          tool: bash
-          command:
-            contains: "curl"
 ```
 
 ---
 
-## Rule fields
+## :material-table: Rule fields
 
 | Field | Type | Required | Description |
 |-------|------|----------|-------------|
-| `name` | string | Yes | Unique rule identifier. Appears in logs. |
-| `action` | string | Yes | One of: `refusal`, `interrupt`, `warn` |
-| `message` | string | No | Message shown to the agent (for refusal/interrupt) |
-| `match` | dict | Yes | Matching criteria (see below) |
-| `when` | dict | No | Additional context conditions |
+| `name` | string | :material-check: | Rule identifier. Appears in logs. |
+| `action` | string | :material-check: | `refusal`, `interrupt`, or `warn` |
+| `message` | string | :material-close: | Message shown to the agent |
+| `match` | dict | :material-check: | Matching criteria |
+| `when` | dict | :material-close: | Context conditions |
 
 ---
 
-## Actions
+## :material-gesture-tap: Actions
 
-| Action | Behavior | Agent loop |
-|--------|----------|------------|
-| `refusal` | LLM response replaced with `message`. Agent sees "I can't do that." | Continues — agent tries something else |
-| `interrupt` | `PolicyViolationError` raised with `message`. | Breaks — agent loop ends |
-| `warn` | Logged in the event. Original response passes through. | Continues unchanged |
-
-### When to use which
-
-- **refusal** — for most cases. The agent gets feedback and can adjust its approach.
-- **interrupt** — for critical violations where the agent should stop entirely (e.g., force-push to main).
-- **warn** — for monitoring. Log that something happened without disrupting the agent.
+| Action | Icon | Agent loop | Use case |
+|--------|------|------------|----------|
+| `refusal` | :material-hand-back-right: | Continues | Agent gets feedback, tries differently |
+| `interrupt` | :material-stop-circle: | Breaks | Critical violation, stop entirely |
+| `warn` | :material-alert: | Continues | Log for review, don't disrupt |
 
 ---
 
-## Match syntax
+## :material-magnify: Match syntax
 
-### Tool name matching
+### Tool name
 
-```yaml
-# Exact match
-match:
-  tool: bash
+=== "Exact"
 
-# Glob pattern
-match:
-  tool: "*write*"
+    ```yaml
+    match:
+      tool: bash
+    ```
 
-# List (any of)
-match:
-  tool: ["bash", "shell", "run_command"]
+=== "Glob"
 
-# Wildcard (all tools)
-match:
-  tool: "*"
-```
+    ```yaml
+    match:
+      tool: "*write*"
+    ```
 
-### Argument matching
+=== "List"
 
-Match on specific tool input arguments:
+    ```yaml
+    match:
+      tool: ["bash", "shell", "run_command"]
+    ```
 
-```yaml
-match:
-  tool: bash
-  command:
-    contains: "rm -rf"
-```
+=== "Wildcard"
 
-| Operator | Type | Example | Matches |
-|----------|------|---------|---------|
-| `contains` | string | `{contains: "rm -rf"}` | Any string containing the substring |
-| `startswith` | string or list | `{startswith: ["/etc/", "/sys/"]}` | String starting with any of the prefixes |
-| `not_startswith` | string or list | `{not_startswith: ["/tmp/"]}` | String NOT starting with the prefixes |
-| `equals` | string | `{equals: "production"}` | Exact match |
-| `in` | list | `{in: ["prod", "staging"]}` | Value is one of the listed items |
-| `regex` | pattern | `{regex: "rm\\s+-[rRfF]*[rR]"}` | Regex match (Python `re` syntax) |
+    ```yaml
+    match:
+      tool: "*"
+    ```
+
+### Argument operators
+
+| Operator | Example | Matches |
+|----------|---------|---------|
+| `contains` | `{contains: "rm -rf"}` | Substring match |
+| `startswith` | `{startswith: ["/etc/", "/sys/"]}` | Prefix match (list = any) |
+| `not_startswith` | `{not_startswith: ["/tmp/"]}` | NOT prefix |
+| `equals` | `{equals: "production"}` | Exact match |
+| `in` | `{in: ["prod", "staging"]}` | Value in list |
+| `regex` | `{regex: "rm\\s+-[rRfF]*[rR]"}` | Python regex |
 
 ### Any-argument matching
 
-Match if **any** argument contains the pattern (regardless of which field):
+Match if **any** argument contains the pattern:
 
 ```yaml
 match:
@@ -161,9 +158,7 @@ match:
     contains: "password"
 ```
 
-### Context scoping with `when`
-
-Restrict rules to specific metadata contexts:
+### Context scoping
 
 ```yaml
 match:
@@ -175,80 +170,50 @@ when:
     deployment: production
 ```
 
-The rule only fires when `metadata.deployment == "production"` in the request. Without `when`, the rule applies globally.
+!!! note "Without `when`, rules apply globally"
+    Add `when` to restrict to specific environments/contexts.
 
 ---
 
-## Combining templates and custom rules
+## :material-code-braces: Examples
 
-Templates and custom rules stack:
+=== "Block destructive SQL"
 
-```yaml
-policies:
-  - name: tool-safety
-    type: tools
-    builtin:
-      filesystem-safety: true
-      safe-git: true
+    ```yaml
     rules:
-      - name: no-docker-rm
+      - name: no-drop-in-prod
+        action: interrupt
+        message: "DROP TABLE blocked. Use a migration."
+        match:
+          tool: execute_sql
+          query:
+            regex: "(?i)DROP\\s+(TABLE|DATABASE)"
+        when:
+          metadata:
+            environment: production
+    ```
+
+=== "Restrict file writes"
+
+    ```yaml
+    rules:
+      - name: project-only-writes
         action: refusal
-        message: "Docker container removal not allowed."
+        message: "Writes restricted to project directory."
+        match:
+          tool: ["write_file", "create_file"]
+          path:
+            not_startswith: ["/home/deploy/myproject/", "/tmp/"]
+    ```
+
+=== "Warn on network access"
+
+    ```yaml
+    rules:
+      - name: log-network
+        action: warn
         match:
           tool: bash
           command:
-            regex: "docker\\s+(rm|container\\s+rm)"
-```
-
-Built-in template rules and your custom rules are merged into one rule set.
-
----
-
-## Examples
-
-### Block destructive SQL in production
-
-```yaml
-- name: db-safety
-  type: tools
-  rules:
-    - name: no-drop-in-prod
-      action: interrupt
-      message: "DROP TABLE blocked in production. Use a migration."
-      match:
-        tool: execute_sql
-        query:
-          regex: "(?i)DROP\\s+(TABLE|DATABASE)"
-      when:
-        metadata:
-          environment: production
-```
-
-### Restrict file writes to project directory
-
-```yaml
-- name: file-safety
-  type: tools
-  rules:
-    - name: no-writes-outside-project
-      action: refusal
-      message: "File writes restricted to project directory."
-      match:
-        tool: ["write_file", "create_file"]
-        path:
-          not_startswith: ["/home/deploy/myproject/", "/tmp/"]
-```
-
-### Warn on network access
-
-```yaml
-- name: network-monitor
-  type: tools
-  rules:
-    - name: log-external-requests
-      action: warn
-      match:
-        tool: bash
-        command:
-          regex: "(curl|wget|nc|ncat)\\s"
-```
+            regex: "(curl|wget|nc)\\s"
+    ```

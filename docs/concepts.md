@@ -1,87 +1,81 @@
-# Core Concepts
+---
+icon: material/lightbulb
+---
 
-ai-warden has four core concepts: **policies**, **agents**, **runs**, and **events**. Understanding how they connect gives you full control over your LLM governance.
+# :material-lightbulb: Core Concepts
+
+ai-warden has four core concepts: **policies**, **agents**, **runs**, and **events**.
 
 ---
 
-## Interception model
+## :material-swap-horizontal: Interception model
 
 ai-warden patches the Anthropic and OpenAI SDKs at the class level. Every instance of `Anthropic()` or `OpenAI()` created in your process is covered — no opt-in needed.
 
-```
-Your Code
-    │
-    ▼
-client.messages.create(**kwargs)
-    │
-    ├─── ai-warden intercepts ───┐
-    │                            │
-    │    ┌─ PRE-HOOKS ─┐        │
-    │    │ Budget       │        │
-    │    │ Agent Ctrl   │        │
-    │    │ Custom       │        │
-    │    │ PII Redact   │        │
-    │    └─────────────┘        │
-    │         │                  │
-    │    Block? → raise error    │
-    │         │                  │
-    │    Strip _prefixed kwargs  │
-    │         │                  │
-    │    ┌─ LLM API ──┐        │
-    │    │ (real call) │        │
-    │    └─────────────┘        │
-    │         │                  │
-    │    ┌─ POST-HOOKS ┐        │
-    │    │ Tools        │        │
-    │    │ Budget (log) │        │
-    │    └─────────────┘        │
-    │         │                  │
-    │    Log event to JSONL      │
-    │                            │
-    └────────────────────────────┘
-    │
-    ▼
-Response returned to your code
+```mermaid
+sequenceDiagram
+    participant App as Your Code
+    participant AW as ai-warden
+    participant LLM as LLM API
+
+    App->>AW: client.messages.create(**kwargs)
+    AW->>AW: PRE-HOOKS (budget, PII, custom)
+    
+    alt Blocked
+        AW-->>App: PolicyViolationError
+    else Passed
+        AW->>LLM: Forward request
+        LLM-->>AW: Response
+        AW->>AW: POST-HOOKS (tools, cost recording)
+        AW->>AW: Log event (async)
+        AW-->>App: Response
+    end
 ```
 
 ---
 
-## Policies
+## :material-shield: Policies
 
 A policy is a rule that governs what your agents can do. Policies have two phases:
 
 | Phase | When | Can do |
 |-------|------|--------|
-| **pre** | Before the LLM call | Block the request, modify it, redact content |
-| **post** | After the LLM responds | Intercept tool calls, record metrics, modify response |
+| :material-arrow-right-bold: **pre** | Before the LLM call | Block the request, modify it, redact content |
+| :material-arrow-left-bold: **post** | After the LLM responds | Intercept tool calls, record metrics, modify response |
 
 ### Verdicts
 
-| Verdict | Effect |
-|---------|--------|
-| **Block** | Request rejected. `PolicyViolationError` raised. LLM never called. |
-| **Warn** | Logged in the event. Request/response passes through unchanged. |
-| **Refusal** | (post only) Response replaced with a message. Agent can retry. |
-| **Interrupt** | (post only) Exception raised. Agent loop breaks. |
+| Verdict | Icon | Effect |
+|---------|------|--------|
+| **Block** | :material-cancel: | Request rejected. `PolicyViolationError` raised. LLM never called. |
+| **Warn** | :material-alert: | Logged in the event. Request/response passes through unchanged. |
+| **Refusal** | :material-hand-back-right: | (post only) LLM response replaced with your message. Agent retries. |
+| **Interrupt** | :material-stop-circle: | (post only) Exception raised. Agent loop breaks. |
 
 ### Priority and ordering
 
 Policies run in priority order (lower number = runs first):
 
-```
-Priority 10: Budget        ← cheapest check
-Priority 15: Agent Control
-Priority 20: Custom Rules
-Priority 50: Tool Safety
-Priority 90: PII           ← most expensive
+```mermaid
+flowchart LR
+    B["Budget (10)"] --> AC["Agent Ctrl (15)"]
+    AC --> C["Custom (20)"]
+    C --> T["Tools (50)"]
+    T --> P["PII (90)"]
+
+    style B fill:#4caf50,color:#fff
+    style AC fill:#66bb6a,color:#fff
+    style C fill:#ffa726,color:#fff
+    style T fill:#ef5350,color:#fff
+    style P fill:#ab47bc,color:#fff
 ```
 
-If a pre-hook policy **blocks**, remaining policies are skipped entirely.
-Post-hook policies always all run (no short-circuit).
+!!! tip "Short-circuit saves money"
+    If budget blocks a request at priority 10, the expensive PII regex scan at priority 90 never runs. Cheap checks first.
 
 ---
 
-## Agents
+## :material-account-group: Agents
 
 An agent is a named identity for a group of LLM calls. Different agents can have different policies:
 
@@ -98,72 +92,78 @@ policies:
 
 ### Setting the agent name
 
-Three ways, in priority order:
+=== ":material-code-parentheses: Context manager"
 
-| Method | Scope | Example |
-|--------|-------|---------|
-| `_agent` kwarg | Per-call | `create(..., _agent="chatbot")` |
-| `aiwarden.agent()` context manager | Block of code | `with aiwarden.agent("chatbot"):` |
-| `AIWARDEN_AGENT_NAME` env var | Process-wide | `export AIWARDEN_AGENT_NAME=chatbot` |
+    ```python
+    import aiwarden
 
-If none is set, the agent name defaults to `"default"`.
+    with aiwarden.agent("chatbot"):
+        response = client.messages.create(...)
+    ```
 
-```python
-import aiwarden
+=== ":material-function: Per-call kwarg"
 
-# Option 1: context manager (recommended for multi-agent)
-with aiwarden.agent("researcher"):
-    response = client.messages.create(...)
+    ```python
+    response = client.messages.create(
+        model="claude-sonnet-4-6",
+        messages=messages,
+        _agent="chatbot",  # stripped before API call
+    )
+    ```
 
-# Option 2: per-call kwarg
-response = client.messages.create(
-    model="claude-sonnet-4-6",
-    messages=messages,
-    _agent="chatbot",
-)
-```
+=== ":material-console: Environment variable"
+
+    ```bash
+    export AIWARDEN_AGENT_NAME=chatbot
+    ```
+
+!!! info "Priority order"
+    `_agent` kwarg > `aiwarden.agent()` context manager > `AIWARDEN_AGENT_NAME` env var > `"default"`
 
 ---
 
-## Runs
+## :material-run-fast: Runs
 
-A run represents one complete agent task — from start to finish, potentially spanning many LLM calls:
+A run represents one complete agent task — start to finish, potentially many LLM calls:
 
+```mermaid
+flowchart TD
+    R["Run: Book a flight"] --> T1["Turn 1: search_flights()"]
+    T1 --> T2["Turn 2: compare_prices()"]
+    T2 --> T3["Turn 3: book_flight()"]
+    T3 --> T4["Turn 4: Done!"]
+
+    style R fill:#7c4dff,color:#fff
+    style T4 fill:#4caf50,color:#fff
 ```
-Run: "Research competitors"
-  ├── Turn 1: web_search("competitor analysis")
-  ├── Turn 2: read_page(url)
-  ├── Turn 3: summarize(findings)
-  └── Turn 4: "Here's your report."
-```
 
-Each run has:
+Each run tracks:
 
-- `run_id` — unique identifier
-- `turn` — call counter within the run
-- `total_cost` — accumulated spend
-- `start_time` — when the run began
-- `tools_called` — list of tools used
+- :material-identifier: `run_id` — unique identifier
+- :material-counter: `turn` — call counter within the run
+- :material-cash: `total_cost` — accumulated spend
+- :material-clock-start: `start_time` — when the run began
+- :material-tools: `tools_called` — list of tools used
 
 ### Automatic detection
 
 ai-warden detects run boundaries automatically using deterministic signals:
 
-1. **OpenTelemetry trace context** — a new `trace_id` means a new run; same trace continues the existing run
-2. **Explicit `_run_id` kwarg** — your code passes a run identifier directly
-3. **Conversation structure** — first turn (no assistant messages in history) signals a new run; subsequent turns with assistant messages continue the current run
+1. :material-chart-timeline: **OpenTelemetry trace context** — a new `trace_id` means a new run
+2. :material-tag: **Explicit `_run_id` kwarg** — your code passes a run identifier directly
+3. :material-message-text: **Conversation structure** — first turn (no assistant messages) signals a new run
 
-These are not guesses — each signal is deterministic. The `.create()` call's message history reliably indicates whether this is a new conversation or a continuation.
+!!! note "These are deterministic, not heuristics"
+    Each signal reliably identifies run boundaries. The `.create()` call's message history indicates whether this is a new conversation or a continuation.
 
 ### Explicit runs (Hot Mode)
 
-For additional tracking (duration, parent-child topology, run summaries), use `aiwarden.run()`:
+For additional tracking (duration, parent-child topology, run summaries):
 
 ```python
 import aiwarden
 
 with aiwarden.run(agent="researcher") as r:
-    # All LLM calls in this block belong to one run
     response1 = client.messages.create(...)
     response2 = client.messages.create(...)
 
@@ -174,14 +174,14 @@ print(r.status)  # "completed"
 
 Hot mode adds:
 
-- Explicit run boundaries (overrides automatic detection)
-- Duration tracking
-- Parent-child topology (nested runs)
-- Run summary events in the log
+- :material-target: Explicit run boundaries (overrides automatic detection)
+- :material-timer: Duration tracking
+- :material-family-tree: Parent-child topology (nested runs)
+- :material-file-document: Run summary events in the log
 
 ---
 
-## Events
+## :material-file-chart: Events
 
 Every LLM call produces an event written to `~/.aiwarden/events.jsonl`:
 
@@ -206,30 +206,16 @@ Every LLM call produces an event written to `~/.aiwarden/events.jsonl`:
 }
 ```
 
-Events are written asynchronously by a background thread — zero impact on your LLM call latency.
-
-### What's captured
-
-| Field | Description |
-|-------|-------------|
-| `provider` | `anthropic` or `openai` |
-| `model` | Model name |
-| `prompt_tokens` / `completion_tokens` | Token usage |
-| `cost` | Dollar cost (from pricing config) |
-| `latency_ms` | End-to-end call time |
-| `run_id` / `turn` | Run correlation |
-| `agent` | Agent name |
-| `caller` | File and line number that made the call |
-| `policies` | Which policies fired and their verdicts |
-| `tags` | Custom metadata from the request |
+!!! tip "Zero latency impact"
+    Events are written asynchronously by a background thread. Your LLM call latency is unaffected.
 
 ---
 
-## Two modes of operation
+## :material-compare: Two modes of operation
 
 | Mode | Setup | What you get |
 |------|-------|-------------|
-| **Zero-touch** | `pip install ai-warden` + YAML | Auto-enforcement, per-call events, budget tracking, automatic run detection |
-| **Hot Mode** | Add `aiwarden.run()` to your code | + explicit run boundaries, duration, parent-child topology, run summaries |
+| :material-auto-fix: **Zero-touch** | `pip install ai-warden` + YAML | Auto-enforcement, per-call events, budget tracking, automatic run detection |
+| :material-fire: **Hot Mode** | Add `aiwarden.run()` to your code | + explicit run boundaries, duration, parent-child topology, run summaries |
 
 Most users start with zero-touch — run detection works automatically from OTel traces and conversation structure. Add hot mode when you need explicit run boundaries or parent-child agent topology.

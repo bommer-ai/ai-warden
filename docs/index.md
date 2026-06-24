@@ -1,27 +1,68 @@
-# ai-warden
+---
+icon: material/shield-lock
+---
+
+# :material-shield-lock: ai-warden
 
 **Policy enforcement and observability for LLM agents. Zero code changes.**
 
-ai-warden sits between your application and the LLM API. Every call to `anthropic.messages.create()` or `openai.chat.completions.create()` is automatically intercepted, governed by your policies, and logged — without modifying a single line of your code.
+<div class="grid cards" markdown>
+
+-   :material-download:{ .lg .middle } **Install in seconds**
+
+    ---
+
+    One `pip install` and your agents are protected. No decorators, no wrappers, no configuration required.
+
+    ```bash
+    pip install ai-warden
+    ```
+
+-   :material-file-document-edit:{ .lg .middle } **Configure with YAML**
+
+    ---
+
+    Define policies in a simple YAML file. Budget limits, PII redaction, tool safety — all declarative.
+
+    [:octicons-arrow-right-24: Configuration](configuration.md)
+
+-   :material-eye:{ .lg .middle } **Observe everything**
+
+    ---
+
+    Every LLM call logged: cost, latency, tokens, policies fired. JSONL format, ready for any pipeline.
+
+    [:octicons-arrow-right-24: Core Concepts](concepts.md)
+
+-   :material-security:{ .lg .middle } **Five policy types**
+
+    ---
+
+    Budget control, PII redaction, tool safety, agent control, and custom rules. All out of the box.
+
+    [:octicons-arrow-right-24: Built-in Policies](policies/overview.md)
+
+</div>
 
 ---
 
-## Install
+## :material-rocket-launch: Quick start
 
-```bash
-pip install ai-warden
-```
+### 1. Install
 
-That's it. Your agents are now protected. PII is redacted, dangerous tools are blocked, and every LLM call is logged to `~/.aiwarden/events.jsonl`.
+=== "pip"
 
-!!! note "Zero code changes"
-    ai-warden patches the Anthropic and OpenAI SDKs at import time via a `.pth` file. No decorators, no wrappers, no configuration required for basic protection.
+    ```bash
+    pip install ai-warden
+    ```
 
----
+=== "pip (with Redis)"
 
-## Quick start
+    ```bash
+    pip install ai-warden[redis]
+    ```
 
-### 1. Create a policy file
+### 2. Create a policy file
 
 Create `.aiwarden/policies.yaml` in your project root:
 
@@ -43,7 +84,7 @@ policies:
       safe-git: true
 ```
 
-### 2. Run your agent as normal
+### 3. Run your agent as normal
 
 ```python
 import anthropic
@@ -56,68 +97,54 @@ response = client.messages.create(
 )
 ```
 
-ai-warden enforces automatically. If the agent tries to exceed its budget, the call is blocked before tokens are spent. If it tries to run `rm -rf /`, the response is replaced with a refusal message.
-
-### 3. See what happened
-
-```bash
-tail -1 ~/.aiwarden/events.jsonl | python -m json.tool
-```
-
-Every LLM call is logged: model, tokens, cost, latency, which policies fired, whether anything was blocked.
+!!! success "That's it"
+    ai-warden enforces automatically. If the agent tries to exceed its budget, the call is blocked before tokens are spent. If it tries to run `rm -rf /`, the response is replaced with a refusal message.
 
 ---
 
-## How it works
+## :material-chart-timeline-variant: How it works
 
-```
-Your Code → client.messages.create(**kwargs)
-                    │
-                    ▼
-            ┌─── PRE-HOOKS ───┐
-            │ [10] Budget      │ ← cheapest check first
-            │ [15] Agent ctrl  │
-            │ [20] Custom      │
-            │ [90] PII redact  │ ← expensive, runs last
-            └──────────────────┘
-                    │
-                    ▼ (blocked? → PolicyViolationError, LLM never called)
-                    │
-              LLM API call
-                    │
-                    ▼
-            ┌── POST-HOOKS ───┐
-            │ [50] Tools       │ ← intercepts dangerous tool calls
-            │ [10] Budget      │ ← records actual cost
-            └──────────────────┘
-                    │
-                    ▼
-            Response returned to your code
+```mermaid
+flowchart LR
+    A[Your Code] --> B["client.messages.create()"]
+    B --> C{PRE-HOOKS}
+    C -->|Block| D[PolicyViolationError]
+    C -->|Pass| E[LLM API Call]
+    E --> F{POST-HOOKS}
+    F --> G[Response]
+    G --> H[Event Log]
+    G --> I[Your Code]
+
+    style D fill:#ff6b6b,color:#fff
+    style E fill:#7c4dff,color:#fff
+    style H fill:#ffd93d,color:#000
 ```
 
-**Pre-hooks** fire before the LLM call — they can block, modify, or redact the request.
-**Post-hooks** fire after — they intercept tool calls and record metrics.
-
-A blocked request never reaches the LLM: zero tokens consumed, zero cost, zero latency.
+| Phase | What happens | Example |
+|-------|-------------|---------|
+| :material-arrow-right-bold: **Pre-hooks** | Check limits, redact PII, validate request | Budget exceeded? Block instantly. |
+| :material-cloud: **LLM Call** | Only happens if pre-hooks pass | Zero cost if blocked. |
+| :material-arrow-left-bold: **Post-hooks** | Intercept tool calls, record cost | Dangerous tool? Replace with refusal. |
+| :material-file-chart: **Event Log** | Every call logged asynchronously | Cost, latency, policies fired. |
 
 ---
 
-## What's included
+## :material-shield-check: What's included
 
-| Policy | What it does | Default | Disable with |
-|--------|-------------|---------|--------------|
-| [**PII Protection**](policies/pii.md) | Redacts emails, SSNs, credit cards, API keys before the LLM sees them | Enabled | `enabled: false` |
-| [**Tool Safety**](policies/tools.md) | Blocks dangerous shell commands, file writes, force pushes | Enabled | `enabled: false` |
-| [**Budget Control**](policies/budget.md) | Spend limits per team/agent with daily/weekly/monthly reset | Disabled | — |
-| [**Agent Control**](policies/agent-control.md) | Limits turns, cost, and duration per run. Loop detection. | Disabled | — |
-| [**Custom Rules**](policies/custom.md) | Declarative rules on any request/response field | Disabled | — |
+| Policy | What it does | Default | 
+|--------|-------------|---------|
+| :material-eye-off: [**PII Protection**](policies/pii.md) | Redacts emails, SSNs, credit cards, API keys | :material-check: Enabled |
+| :material-tools: [**Tool Safety**](policies/tools.md) | Blocks dangerous shell commands, file writes, force pushes | :material-check: Enabled |
+| :material-cash: [**Budget Control**](policies/budget.md) | Spend limits per team/agent with daily/weekly/monthly reset | :material-close: Disabled |
+| :material-robot: [**Agent Control**](policies/agent-control.md) | Limits turns, cost, duration per run. Loop detection. | :material-close: Disabled |
+| :material-code-tags: [**Custom Rules**](policies/custom.md) | Declarative rules on any request/response field | :material-close: Disabled |
 
 !!! note "Defaults apply only when no policy file exists"
-    Once you create `.aiwarden/policies.yaml`, only the policies listed in it are active. See [Configuration](configuration.md#default-enabled-policies) for details.
+    Once you create `.aiwarden/policies.yaml`, only the policies listed in it are active. See [Configuration](configuration.md#disabling-policies) for details on disabling defaults.
 
 ---
 
-## Distributed budget enforcement
+## :material-server-network: Distributed budget enforcement
 
 For multi-process deployments (Kubernetes, Gunicorn workers), enable shared budget tracking via Redis:
 
@@ -126,14 +153,45 @@ pip install ai-warden[redis]
 export AIWARDEN_REDIS_URL=redis://your-redis:6379
 ```
 
-Budget limits are now enforced across all pods atomically. Without Redis, budgets are tracked per-process.
+!!! tip "Zero config changes"
+    Budget limits are now enforced across all pods atomically. Without Redis, budgets are tracked per-process. The env var is the only switch.
 
 ---
 
-## Next steps
+## :material-arrow-right-circle: Next steps
 
-- [Core Concepts](concepts.md) — policies, runs, agents, and how they connect
-- [Built-in Policies](policies/overview.md) — all five policy types explained
-- [Configuration](configuration.md) — YAML structure, env vars, custom pricing
-- [Multi-Agent](multi-agent.md) — different rules for different agents
-- [Examples](examples/single-agent.md) — copy-paste recipes
+<div class="grid cards" markdown>
+
+-   :material-lightbulb:{ .lg .middle } **Core Concepts**
+
+    ---
+
+    Understand policies, runs, agents, and how they connect.
+
+    [:octicons-arrow-right-24: Read more](concepts.md)
+
+-   :material-shield:{ .lg .middle } **Built-in Policies**
+
+    ---
+
+    All five policy types with parameters and examples.
+
+    [:octicons-arrow-right-24: Overview](policies/overview.md)
+
+-   :material-account-multiple:{ .lg .middle } **Multi-Agent**
+
+    ---
+
+    Different rules for different agents.
+
+    [:octicons-arrow-right-24: Multi-Agent](multi-agent.md)
+
+-   :material-code-braces:{ .lg .middle } **Examples**
+
+    ---
+
+    Copy-paste recipes for common setups.
+
+    [:octicons-arrow-right-24: Single Agent](examples/single-agent.md)
+
+</div>

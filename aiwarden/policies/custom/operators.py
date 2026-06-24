@@ -7,8 +7,24 @@ All operators are registered in the Operator enum and VALID_OPERATORS set.
 import logging
 import re
 from enum import Enum
+from functools import lru_cache
 
 log = logging.getLogger(__name__)
+
+_REGEX_MATCH_LIMIT = 1_000_000
+
+
+@lru_cache(maxsize=1024)
+def _compile_regex(pattern: str):
+    return re.compile(pattern)
+
+
+def _safe_regex_search(pattern: str, text: str) -> bool:
+    """Regex search with input length guard to mitigate ReDoS on large inputs."""
+    compiled = _compile_regex(pattern)
+    if len(text) > _REGEX_MATCH_LIMIT:
+        text = text[:_REGEX_MATCH_LIMIT]
+    return compiled.search(text) is not None
 
 
 class Operator(str, Enum):
@@ -74,7 +90,7 @@ def match_value(value, matchers: dict) -> bool:
             if str_value in [str(p) for p in pattern]:
                 return False
         elif op == Operator.REGEX:
-            if not re.search(str(pattern), str_value):
+            if not _safe_regex_search(str(pattern), str_value):
                 return False
         elif op == Operator.GT:
             try:

@@ -94,9 +94,10 @@ class PIIPolicy(Policy):
             return text, []
         found = []
         for pii_type, pattern in self._patterns.items():
-            if pattern.search(text):
+            result = pattern.sub(f"[REDACTED:{pii_type}]", text)
+            if result != text:
                 found.append(pii_type)
-                text = pattern.sub(f"[REDACTED:{pii_type}]", text)
+                text = result
         return text, found
 
     def _redact_messages(self, messages: list) -> tuple[list, list[str]]:

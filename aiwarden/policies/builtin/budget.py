@@ -144,6 +144,15 @@ class BudgetPolicy(Policy):
             if group not in self._spend:
                 self._spend[group] = {}
             self._spend[group][period] = self._spend[group].get(period, 0.0) + amount
+            self._evict_old_periods(group, period)
+
+    def _evict_old_periods(self, group: str, current_period: str):
+        """Remove spend entries for periods older than the current one."""
+        periods = self._spend.get(group)
+        if periods and len(periods) > 2:
+            old_keys = [k for k in periods if k != current_period]
+            for k in old_keys:
+                del periods[k]
 
     # ── public helpers ────────────────────────────────────────────────────
 

@@ -47,13 +47,13 @@ class ToolsPolicy(Policy):
                     continue
 
                 msg = rule.message or f"Policy '{rule.name}' blocked tool '{tool_name}'"
-                log.info("[aiwarden] tools-policy '%s' matched '%s' action=%s",
-                        rule.name, tool_name, rule.action)
 
                 if rule.action == "interrupt":
+                    log.info("[aiwarden] tools-policy '%s' interrupted '%s'", rule.name, tool_name)
                     raise PolicyViolationError(msg)
 
                 if rule.action == "refusal":
+                    log.info("[aiwarden] tools-policy '%s' refused '%s'", rule.name, tool_name)
                     request["_policy_blocked"] = True
                     request["_blocked_rule"]   = rule.name
                     request["_blocked_tool"]   = tool_name
@@ -61,7 +61,8 @@ class ToolsPolicy(Policy):
                     return _build_refusal(response, msg)
 
                 if rule.action == "warn":
-                    log.warning("[aiwarden] POLICY WARN — %s (tool: %s)", msg, tool_name)
+                    if log.isEnabledFor(logging.WARNING):
+                        log.warning("[aiwarden] POLICY WARN — %s (tool: %s)", msg, tool_name)
 
         return response
 

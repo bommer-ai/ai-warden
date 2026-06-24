@@ -6,6 +6,7 @@ build-backend = "setuptools.build_meta"
 name = "ai-warden"
 version = "0.1.0"
 description = "Policy enforcement and observability for LLM agents. Zero code changes."
+requires-python = ">=3.11"
 dependencies = [
     "anthropic>=0.109.1",
 ]
@@ -20,5 +21,20 @@ include = ["aiwarden*"]
 [dependency-groups]
 dev = [
     "pytest>=9.1.0",
+    "pytest-cov>=6.0",
     "pyyaml>=6.0.3",
+    "openai>=1.0.0",
 ]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+addopts = "--tb=short"
+
+[tool.coverage.run]
+source = ["aiwarden"]
+omit = ["aiwarden/bootstrap.py"]
+
+[tool.coverage.report]
+fail_under = 70
+show_missing = true
+skip_empty = true

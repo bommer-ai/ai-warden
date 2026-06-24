@@ -110,8 +110,9 @@ class AgentControlPolicy(Policy):
             return response
 
         for tool_name in tool_calls:
-            recent = state.tools_called[-self._max_tool_repeats:] if state.tools_called else []
-            if len(recent) >= self._max_tool_repeats and all(t == tool_name for t in recent):
+            n = self._max_tool_repeats
+            recent = list(state.tools_called)[-n:] if state.tools_called else []
+            if len(recent) >= n and all(t == tool_name for t in recent):
                 log.info("[aiwarden] agent-control: loop detected — '%s' x%d", tool_name, self._max_tool_repeats + 1)
                 return self._refusal(response, f"Tool '{tool_name}' called {self._max_tool_repeats} times consecutively — possible loop detected")
 

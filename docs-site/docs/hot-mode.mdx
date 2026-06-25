@@ -1,6 +1,14 @@
+---
+title: Hot Mode
+description: Wrap your agent code for exact run tracking — boundaries, topology, metrics
+sidebar_position: 5
+---
+
 # Hot Mode
 
 Wrap your agent code for exact run tracking — boundaries, topology, metrics.
+
+---
 
 ## Basic usage
 
@@ -19,6 +27,8 @@ print(r.status)     # "completed"
 print(r.tools)      # ["search", "book_flight"]
 ```
 
+---
+
 ## What hot mode adds over zero-touch
 
 | | Zero-touch | Hot mode |
@@ -29,6 +39,8 @@ print(r.tools)      # ["search", "book_flight"]
 | Status | Unavailable | completed / errored |
 | Parent-child | Flat | Tree (nested wrappers) |
 | Run summary event | Not emitted | Emitted |
+
+---
 
 ## Multi-agent topology
 
@@ -45,6 +57,8 @@ with aiwarden.run(agent="orchestrator") as parent:
 # search.parent_id = parent.id
 ```
 
+---
+
 ## Error tracking
 
 ```python
@@ -57,6 +71,8 @@ except Exception:
 print(r.status)  # "errored"
 print(r._error)  # the exception
 ```
+
+---
 
 ## Run summary event
 
@@ -75,6 +91,8 @@ On exit, hot mode emits a summary event to your log file:
   "children": []
 }
 ```
+
+---
 
 ## When to use hot mode
 

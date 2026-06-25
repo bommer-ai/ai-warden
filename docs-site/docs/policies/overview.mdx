@@ -1,0 +1,173 @@
+---
+title: Built-in Policies
+description: All five policy types — budget, PII, tools, agent control, and custom rules
+sidebar_position: 1
+---
+
+import {Card, CardGroup} from '@site/src/components/Card';
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Built-in Policies
+
+ai-warden ships with five policy types. All configured via YAML — no code needed.
+
+---
+
+## Policy types
+
+<CardGroup cols={2}>
+
+<Card title="Budget Control" icon="dollar" href="/policies/budget">
+  Spend limits per team/agent with daily/weekly/monthly reset. Blocks when exceeded.
+</Card>
+
+<Card title="Agent Control" icon="shield" href="/policies/agent-control">
+  Per-run limits: max turns, cost, duration, and loop detection.
+</Card>
+
+<Card title="Custom Rules" icon="code" href="/policies/custom">
+  Declarative rules on any request/response field. Model restrictions, content filters.
+</Card>
+
+<Card title="Tool Safety" icon="tool" href="/policies/tools">
+  Blocks dangerous tool calls: rm -rf, force-push, sudo, credential access.
+</Card>
+
+<Card title="PII Protection" icon="eye" href="/policies/pii">
+  Redacts emails, SSNs, credit cards, API keys before the LLM sees them.
+</Card>
+
+</CardGroup>
+
+---
+
+## Priority and execution order
+
+Policies run in priority order (lower number = runs first):
+
+| Priority | Policy | Rationale |
+|----------|--------|-----------|
+| 10 | Budget | Cheapest check — just compare two numbers |
+| 15 | Agent Control | Check turn/cost/duration counters |
+| 20 | Custom Rules | Your business logic |
+| 50 | Tool Safety | Inspect response content (post-hook) |
+| 90 | PII | Expensive regex scan — only if nothing blocked |
+
+:::tip Short-circuit saves money
+If budget blocks at priority 10, PII redaction at priority 90 never runs. Expensive work is avoided entirely.
+:::
+
+---
+
+## Policy actions
+
+| Action | Phase | Behavior |
+|--------|-------|----------|
+| **block** | pre | Request never reaches the LLM. `PolicyViolationError` raised. |
+| **warn** | pre/post | Logged in the event. Request/response passes through. |
+| **refusal** | post | Response replaced with your message. Agent retries gracefully. |
+| **interrupt** | post | Exception raised. Agent loop breaks hard. |
+
+:::info When to use which
+- **block** — budget exceeded, unauthorized model. LLM should never see this.
+- **warn** — approaching limits, unusual patterns. Log for review.
+- **refusal** — dangerous tool call. Give agent a helpful message to try differently.
+- **interrupt** — critical safety violation. Stop everything.
+:::
+
+---
+
+## Common policy fields
+
+Every policy type supports these fields:
+
+```yaml
+policies:
+  - name: my-policy          # required — unique identifier
+    type: budget             # required — pii, tools, budget, agent_control, custom, module
+    enabled: true            # optional — disable without removing
+    priority: 100            # optional — lower runs first
+    agents: ["chatbot"]      # optional — scope to specific agents
+    hooks: ["pre", "post"]   # optional — override which phases run
+```
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Unique identifier. Used in logs and errors. |
+| `type` | string | Yes | Policy type: `pii`, `tools`, `budget`, `agent_control`, `custom`, `module` |
+| `enabled` | boolean | No | Default `true`. Set to `false` to disable. |
+| `priority` | integer | No | Execution order. Lower = first. |
+| `agents` | list | No | Scope to named agents. Empty = all. |
+| `hooks` | list | No | Override phases: `["pre"]`, `["post"]`, `["pre", "post"]` |
+
+---
+
+## Agent scoping
+
+The `agents` field restricts policies to specific named agents:
+
+```yaml
+policies:
+  # Strict for chatbot
+  - name: chatbot-budget
+    type: budget
+    agents: ["chatbot"]
+    limit: 10.00
+    reset: daily
+
+  # Generous for researcher
+  - name: researcher-budget
+    type: budget
+    agents: ["researcher"]
+    limit: 200.00
+    reset: monthly
+
+  # Global PII (no agents field = everyone)
+  - name: pii-global
+    type: pii
+```
+
+<Tabs>
+<TabItem value="context" label="Context manager">
+
+```python
+import aiwarden
+
+with aiwarden.agent("chatbot"):
+    response = client.messages.create(...)
+```
+
+</TabItem>
+<TabItem value="kwarg" label="Per-call kwarg">
+
+```python
+response = client.messages.create(
+    ..., _agent="chatbot",
+)
+```
+
+</TabItem>
+<TabItem value="env" label="Environment variable">
+
+```bash
+export AIWARDEN_AGENT_NAME=chatbot
+```
+
+</TabItem>
+</Tabs>
+
+---
+
+## Writing a module policy
+
+For policies that need code beyond YAML:
+
+```yaml
+- name: my-complex-policy
+  type: module
+  module: mypackage.policies.RateLimitPolicy
+  max_requests_per_minute: 60
+```
+
+See [Writing a Module Policy](/advanced/module-policy) for the full guide.

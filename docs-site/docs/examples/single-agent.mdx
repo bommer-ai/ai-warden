@@ -1,3 +1,9 @@
+---
+title: "Example: Single Agent"
+description: Complete setup for a customer support chatbot with full protection
+sidebar_position: 1
+---
+
 # Example: Single Agent with Full Protection
 
 A complete setup for a customer support chatbot with PII protection, budget control, tool safety, and run limits.
@@ -28,9 +34,9 @@ No imports from ai-warden. No wrappers. No decorators. Your code stays clean.
 
 ---
 
-## Policy file (`.aiwarden/policies.yaml`)
+## Policy file
 
-```yaml
+```yaml title=".aiwarden/policies.yaml"
 policies:
   # 1. Redact customer PII before it reaches Claude
   - name: customer-pii
@@ -111,7 +117,7 @@ except PolicyViolationError as e:
 
 ### Agent stuck in a loop
 
-```
+```text
 Turn 1: search_docs("billing")       ✓
 Turn 2: search_docs("billing FAQ")   ✓
 Turn 3: search_docs("billing help")  ✗ BLOCKED: "possible loop detected"

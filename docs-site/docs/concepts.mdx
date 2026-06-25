@@ -1,0 +1,201 @@
+---
+title: Core Concepts
+description: Understand policies, agents, runs, and events — the four building blocks of ai-warden
+sidebar_position: 3
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Core Concepts
+
+ai-warden has four core concepts: **policies**, **agents**, **runs**, and **events**.
+
+---
+
+## Interception model
+
+ai-warden patches the Anthropic and OpenAI SDKs at the class level. Every instance of `Anthropic()` or `OpenAI()` created in your process is covered — no opt-in needed.
+
+```text
+Your Code → client.messages.create(**kwargs)
+  → ai-warden PRE-HOOKS (budget, PII, custom)
+    → Blocked? → PolicyViolationError
+    → Passed?  → LLM API → POST-HOOKS (tools, cost) → Log event → Response
+```
+
+---
+
+## Policies
+
+A policy is a rule that governs what your agents can do. Policies have two phases:
+
+| Phase | When | Can do |
+|-------|------|--------|
+| **pre** | Before the LLM call | Block the request, modify it, redact content |
+| **post** | After the LLM responds | Intercept tool calls, record metrics, modify response |
+
+### Verdicts
+
+| Verdict | Effect |
+|---------|--------|
+| **Block** | Request rejected. `PolicyViolationError` raised. LLM never called. |
+| **Warn** | Logged in the event. Request/response passes through unchanged. |
+| **Refusal** | (post only) LLM response replaced with your message. Agent retries. |
+| **Interrupt** | (post only) Exception raised. Agent loop breaks. |
+
+### Priority and ordering
+
+Policies run in priority order (lower number = runs first):
+
+| Priority | Policy | Rationale |
+|----------|--------|-----------|
+| 10 | Budget | Cheapest check — just compare two numbers |
+| 15 | Agent Control | Check turn/cost/duration counters |
+| 20 | Custom Rules | Your business logic |
+| 50 | Tool Safety | Inspect response content (post-hook) |
+| 90 | PII | Expensive regex scan — only if nothing blocked |
+
+:::tip Short-circuit saves money
+If budget blocks a request at priority 10, the expensive PII regex scan at priority 90 never runs. Cheap checks first.
+:::
+
+---
+
+## Agents
+
+An agent is a named identity for a group of LLM calls. Different agents can have different policies:
+
+```yaml
+policies:
+  - name: chatbot-budget
+    type: budget
+    agents: ["chatbot"]      # only for chatbot
+    limit: 10.00
+
+  - name: pii-all
+    type: pii                # no agents field = all agents
+```
+
+### Setting the agent name
+
+<Tabs>
+<TabItem value="context" label="Context manager">
+
+```python
+import aiwarden
+
+with aiwarden.agent("chatbot"):
+    response = client.messages.create(...)
+```
+
+</TabItem>
+<TabItem value="kwarg" label="Per-call kwarg">
+
+```python
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    messages=messages,
+    _agent="chatbot",  # stripped before API call
+)
+```
+
+</TabItem>
+<TabItem value="env" label="Environment variable">
+
+```bash
+export AIWARDEN_AGENT_NAME=chatbot
+```
+
+</TabItem>
+</Tabs>
+
+:::info Priority order
+`_agent` kwarg > `aiwarden.agent()` context manager > `AIWARDEN_AGENT_NAME` env var > `"default"`
+:::
+
+---
+
+## Runs
+
+A run represents one complete agent task — start to finish, potentially many LLM calls.
+
+Each run tracks:
+
+- `run_id` — unique identifier
+- `turn` — call counter within the run
+- `total_cost` — accumulated spend
+- `start_time` — when the run began
+- `tools_called` — list of tools used
+
+### Automatic detection
+
+ai-warden detects run boundaries automatically using deterministic signals:
+
+1. **OpenTelemetry trace context** — a new `trace_id` means a new run
+2. **Explicit `_run_id` kwarg** — your code passes a run identifier directly
+3. **Conversation structure** — first turn (no assistant messages) signals a new run
+
+:::note
+These are deterministic, not heuristics. Each signal reliably identifies run boundaries.
+:::
+
+### Explicit runs (Hot Mode)
+
+For additional tracking (duration, parent-child topology, run summaries):
+
+```python
+import aiwarden
+
+with aiwarden.run(agent="researcher") as r:
+    response1 = client.messages.create(...)
+    response2 = client.messages.create(...)
+
+print(r.cost)    # $0.042
+print(r.turns)   # 2
+print(r.status)  # "completed"
+```
+
+Hot mode adds explicit run boundaries, duration tracking, parent-child topology, and run summary events.
+
+---
+
+## Events
+
+Every LLM call produces an event written to `~/.aiwarden/events.jsonl`:
+
+```json
+{
+  "type": "llm_call",
+  "timestamp": "2026-06-24T10:30:00Z",
+  "provider": "anthropic",
+  "model": "claude-sonnet-4-6",
+  "prompt_tokens": 1200,
+  "completion_tokens": 450,
+  "cost": 0.0105,
+  "latency_ms": 2340,
+  "run_id": "abc123",
+  "turn": 3,
+  "agent": "chatbot",
+  "caller": {"file": "app/chat.py", "line": 42},
+  "policies": [
+    {"name": "budget-cap", "action": "pass"},
+    {"name": "pii-protection", "action": "warn"}
+  ]
+}
+```
+
+:::tip Zero latency impact
+Events are written asynchronously by a background thread. Your LLM call latency is unaffected.
+:::
+
+---
+
+## Two modes of operation
+
+| Mode | Setup | What you get |
+|------|-------|-------------|
+| **Zero-touch** | `pip install ai-warden` + YAML | Auto-enforcement, per-call events, budget tracking, automatic run detection |
+| **Hot Mode** | Add `aiwarden.run()` to your code | + explicit run boundaries, duration, parent-child topology, run summaries |
+
+Most users start with zero-touch — run detection works automatically from OTel traces and conversation structure. Add hot mode when you need explicit run boundaries or parent-child agent topology.

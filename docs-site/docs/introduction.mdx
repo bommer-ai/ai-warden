@@ -1,0 +1,96 @@
+---
+slug: /
+title: ai-warden
+sidebar_label: Introduction
+sidebar_position: 1
+---
+
+import {Card, CardGroup} from '@site/src/components/Card';
+
+# ai-warden
+
+**Policy enforcement and observability for AI agents — no code changes.**
+
+<div className="badge-row">
+
+[![PyPI version](https://img.shields.io/pypi/v/ai-warden?style=flat-square&color=6366f1)](https://pypi.org/project/ai-warden/)
+
+</div>
+
+Policy enforcement and observability for **any AI agent** — Anthropic, OpenAI, or compatible. One pip install, zero code changes. Every LLM call is automatically intercepted, secured, and audited.
+
+AI agents fail in predictable ways. They overspend budgets, leak PII to the LLM, call dangerous tools, get stuck in loops, or run past their intended scope. Left unattended, these failures cascade into cost overruns, data breaches, and lost trust.
+
+ai-warden solves this with **policies**. These rules hook into every `client.messages.create()` call to **enforce limits**, **redact sensitive data**, **block dangerous tools**, and **log everything**. Zero code changes required.
+
+No data leaves your infrastructure.
+
+---
+
+## Get started
+
+<CardGroup cols={2}>
+
+<Card title="5 built-in policies" icon="shield" href="/policies/overview">
+  PII redaction, budget control, tool safety, agent limits, and custom rules. All out of the box.
+</Card>
+
+<Card title="Full observability" icon="chart-line" href="/concepts">
+  Every LLM call logged with cost, latency, tokens, and policy decisions. JSONL format, pipeline-ready.
+</Card>
+
+<Card title="Multi-agent scoping" icon="users" href="/multi-agent">
+  Different agents get different rules. Per-agent budgets, tool restrictions, and run limits in one YAML file.
+</Card>
+
+<Card title="Easy configuration" icon="gear" href="/configuration">
+  Define your entire security posture in a single YAML file. No decorators, no wrappers.
+</Card>
+
+</CardGroup>
+
+---
+
+## Quick start
+
+```bash
+pip install ai-warden
+```
+
+Create `.aiwarden/policies.yaml`:
+
+```yaml
+policies:
+  - name: pii-protection
+    type: pii
+
+  - name: budget-cap
+    type: budget
+    limit: 50.00
+    reset: daily
+
+  - name: tool-safety
+    type: tools
+    builtin:
+      filesystem-safety: true
+      no-privilege-escalation: true
+      safe-git: true
+```
+
+Run your agent — unchanged:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+# Enforced automatically. No changes needed.
+```
+
+That's it. PII is redacted, budgets enforced, tool calls filtered — before and after every LLM call.
+
+See the [Getting started](/getting-started) guide for the full walkthrough.

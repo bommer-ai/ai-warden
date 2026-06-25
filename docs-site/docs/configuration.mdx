@@ -1,3 +1,12 @@
+---
+title: Configuration
+description: Full reference for ai-warden YAML policies and environment variables
+sidebar_position: 4
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Configuration
 
 ai-warden is configured through a YAML policy file and environment variables. No code changes required.
@@ -17,8 +26,9 @@ ai-warden looks for a policy file in this order:
 
 The first file found wins. Files are not merged across levels.
 
-!!! tip "Team configuration"
-    Commit `.aiwarden/policies.yaml` to your repo. Every developer gets the same policy set without per-machine setup.
+:::tip Team configuration
+Commit `.aiwarden/policies.yaml` to your repo. Every developer gets the same policy set without per-machine setup.
+:::
 
 ---
 
@@ -127,8 +137,9 @@ aiwarden.configure(
 )
 ```
 
-!!! warning
-    `configure()` must be called before the first LLM call. After policies are loaded, configuration is frozen.
+:::warning
+`configure()` must be called before the first LLM call. After policies are loaded, configuration is frozen.
+:::
 
 ---
 
@@ -136,8 +147,7 @@ aiwarden.configure(
 
 Cost tracking uses built-in pricing for common models. Override with your own:
 
-```yaml
-# custom_pricing.yaml
+```yaml title="custom_pricing.yaml"
 my-fine-tuned-model:
   prompt: 0.01
   completion: 0.05
@@ -192,18 +202,7 @@ Once you create a `.aiwarden/policies.yaml` file, only the policies listed in it
 export AIWARDEN_ENABLED=false
 ```
 
-### Disable specific policies without removing them
-
-```yaml
-policies:
-  - name: pii-protection
-    type: pii
-    enabled: false    # stays in config, does not run
-```
-
 ### Disable for tests
-
-In your test setup:
 
 ```python
 import aiwarden
@@ -232,7 +231,7 @@ response = client.messages.create(
 )
 ```
 
-The LLM provider never sees `_agent` or `_run_id`. This is how you pass control information to ai-warden without breaking the SDK contract.
+The LLM provider never sees `_agent` or `_run_id`.
 
 ---
 

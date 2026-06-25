@@ -1,0 +1,227 @@
+---
+title: Tool Safety
+description: Block dangerous tool calls before your agent executes them
+sidebar_position: 4
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
+# Tool Safety
+
+**Type:** `tools` | **Priority:** 50 | **Hooks:** post | **Default:** Enabled
+
+Inspects LLM responses for dangerous tool calls and blocks them before your agent executes them. The agent sees a refusal message and can try a different approach.
+
+---
+
+## How it works
+
+```text
+Your Agent → "Delete the old logs"
+LLM responds → tool_use: bash("rm -rf /var/log")
+ai-warden → Rule match: filesystem-safety
+Agent sees → "I'm not allowed to run destructive commands."
+Agent → Retries with safe alternative
+```
+
+:::info Post-hook only
+Tool Safety runs after the LLM responds because it inspects what tool the model wants to call. The LLM call already happened (tokens consumed), but the dangerous action is prevented.
+:::
+
+---
+
+## Built-in templates
+
+Enable pre-built rule sets with a single flag:
+
+```yaml
+policies:
+  - name: tool-safety
+    type: tools
+    builtin:
+      filesystem-safety: true
+      no-privilege-escalation: true
+      safe-git: true
+      no-credential-access: true
+      no-auto-install: true
+      network-safety: true
+```
+
+| Template | What it blocks |
+|----------|----------------|
+| `filesystem-safety` | `rm -rf`, `rm -fr`, writes to `/etc/`, `/sys/`, `/proc/` |
+| `no-privilege-escalation` | `sudo`, `su`, `chmod 777`, `chown root` |
+| `safe-git` | `git push --force`, `git reset --hard`, `git clean -f` |
+| `no-credential-access` | Reading `.env`, `.ssh/`, `.aws/credentials` |
+| `no-auto-install` | `pip install`, `npm install`, `apt-get install` |
+| `network-safety` | Warns on `curl`, `wget`, `nc` (warn, not block) |
+
+:::tip Templates stack
+Enable as many as you need. Custom rules work alongside templates.
+:::
+
+---
+
+## Custom rules
+
+```yaml
+policies:
+  - name: tool-safety
+    type: tools
+    rules:
+      - name: no-prod-db-writes
+        action: refusal
+        message: "Database writes blocked in production."
+        match:
+          tool: execute_sql
+          query:
+            regex: "(?i)(INSERT|UPDATE|DELETE|DROP)"
+        when:
+          metadata:
+            environment: production
+```
+
+---
+
+## Rule fields
+
+| Field | Type | Required | Description |
+|-------|------|----------|-------------|
+| `name` | string | Yes | Rule identifier. Appears in logs. |
+| `action` | string | Yes | `refusal`, `interrupt`, or `warn` |
+| `message` | string | No | Message shown to the agent |
+| `match` | dict | Yes | Matching criteria |
+| `when` | dict | No | Context conditions |
+
+---
+
+## Actions
+
+| Action | Agent loop | Use case |
+|--------|------------|----------|
+| `refusal` | Continues | Agent gets feedback, tries differently |
+| `interrupt` | Breaks | Critical violation, stop entirely |
+| `warn` | Continues | Log for review, don't disrupt |
+
+---
+
+## Match syntax
+
+### Tool name
+
+<Tabs>
+<TabItem value="exact" label="Exact">
+
+```yaml
+match:
+  tool: bash
+```
+
+</TabItem>
+<TabItem value="glob" label="Glob">
+
+```yaml
+match:
+  tool: "*write*"
+```
+
+</TabItem>
+<TabItem value="list" label="List">
+
+```yaml
+match:
+  tool: ["bash", "shell", "run_command"]
+```
+
+</TabItem>
+</Tabs>
+
+### Argument operators
+
+| Operator | Example | Matches |
+|----------|---------|---------|
+| `contains` | `{contains: "rm -rf"}` | Substring match |
+| `startswith` | `{startswith: ["/etc/", "/sys/"]}` | Prefix match (list = any) |
+| `not_startswith` | `{not_startswith: ["/tmp/"]}` | NOT prefix |
+| `equals` | `{equals: "production"}` | Exact match |
+| `in` | `{in: ["prod", "staging"]}` | Value in list |
+| `regex` | `{regex: "rm\\s+-[rRfF]*[rR]"}` | Python regex |
+
+### Any-argument matching
+
+Match if **any** argument contains the pattern:
+
+```yaml
+match:
+  tool: "*"
+  any_arg:
+    contains: "password"
+```
+
+### Context scoping
+
+```yaml
+match:
+  tool: execute_sql
+  query:
+    regex: "(?i)DROP"
+when:
+  metadata:
+    deployment: production
+```
+
+:::note
+Without `when`, rules apply globally. Add `when` to restrict to specific environments/contexts.
+:::
+
+---
+
+## Examples
+
+<Tabs>
+<TabItem value="sql" label="Block destructive SQL">
+
+```yaml
+rules:
+  - name: no-drop-in-prod
+    action: interrupt
+    message: "DROP TABLE blocked. Use a migration."
+    match:
+      tool: execute_sql
+      query:
+        regex: "(?i)DROP\\s+(TABLE|DATABASE)"
+    when:
+      metadata:
+        environment: production
+```
+
+</TabItem>
+<TabItem value="files" label="Restrict file writes">
+
+```yaml
+rules:
+  - name: project-only-writes
+    action: refusal
+    message: "Writes restricted to project directory."
+    match:
+      tool: ["write_file", "create_file"]
+      path:
+        not_startswith: ["/home/deploy/myproject/", "/tmp/"]
+```
+
+</TabItem>
+<TabItem value="network" label="Warn on network">
+
+```yaml
+rules:
+  - name: log-network
+    action: warn
+    match:
+      tool: bash
+      command:
+        regex: "(curl|wget|nc)\\s"
+```
+
+</TabItem>
+</Tabs>

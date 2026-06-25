@@ -1,6 +1,14 @@
+---
+title: "Example: Custom Rules"
+description: Declarative policies for common scenarios — no code needed
+sidebar_position: 3
+---
+
 # Example: Custom Rules
 
 Declarative policies for common scenarios — no code needed.
+
+---
 
 ## Block specific models in production
 
@@ -19,6 +27,8 @@ Declarative policies for common scenarios — no code needed.
         metadata.environment: production
 ```
 
+---
+
 ## Limit token usage per team
 
 ```yaml
@@ -35,6 +45,8 @@ Declarative policies for common scenarios — no code needed.
       when:
         metadata.team: intern
 ```
+
+---
 
 ## Content guardrails on responses
 
@@ -59,6 +71,8 @@ Declarative policies for common scenarios — no code needed.
           contains: "use ChatGPT instead"
 ```
 
+---
+
 ## Warn on expensive requests
 
 ```yaml
@@ -73,6 +87,8 @@ Declarative policies for common scenarios — no code needed.
         max_tokens:
           gt: 8000
 ```
+
+---
 
 ## Block after N turns in a run
 

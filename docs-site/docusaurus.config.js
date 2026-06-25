@@ -7,7 +7,7 @@ const config = {
   favicon: 'img/favicon.ico',
 
   url: 'https://docs.aiwarden.dev',
-  baseUrl: '/',
+  baseUrl: '/ai-warden/',
 
   organizationName: 'bommer-ai',
   projectName: 'ai-warden',

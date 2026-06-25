@@ -7,7 +7,7 @@ on:
 jobs:
   pypi-publish:
     runs-on: ubuntu-latest
-    environment: PyPi
+    environment: pypi
     permissions:
       id-token: write
       contents: read

@@ -1,11 +1,18 @@
+---
+title: Writing a Module Policy
+description: For logic beyond YAML — rate limiting, external API calls, custom state
+sidebar_position: 4
+---
+
 # Writing a Module Policy
 
 For logic that can't be expressed in YAML — rate limiting, external API calls, custom state.
 
+---
+
 ## 1. Write your policy class
 
-```python
-# my_app/policies.py
+```python title="my_app/policies.py"
 from aiwarden.policies.base import Policy, Block, Warn
 
 class RateLimitPolicy(Policy):
@@ -25,6 +32,8 @@ class RateLimitPolicy(Policy):
         return request, None
 ```
 
+---
+
 ## 2. Reference it in YAML
 
 ```yaml
@@ -36,6 +45,8 @@ policies:
     max_per_minute: 30
 ```
 
+---
+
 ## Key points
 
 - Your class must subclass `Policy`
@@ -44,6 +55,8 @@ policies:
 - `post()` returns `response` (or `(response, Warn)`)
 - Module is imported once (Python caches it) — no per-call import overhead
 - Invalid module paths are logged and skipped — never crash your app
+
+---
 
 ## When to use module vs custom
 

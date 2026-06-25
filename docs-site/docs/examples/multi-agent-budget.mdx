@@ -1,12 +1,18 @@
+---
+title: "Example: Multi-Agent Budgets"
+description: Three agents with independent budgets, turn limits, and tool restrictions
+sidebar_position: 2
+---
+
 # Example: Multi-Agent with Separate Budgets
 
 Three agents — chatbot, payment processor, and researcher — each with different budgets, turn limits, and tool restrictions.
 
 ---
 
-## Policy file (`.aiwarden/policies.yaml`)
+## Policy file
 
-```yaml
+```yaml title=".aiwarden/policies.yaml"
 policies:
   # ─── Global (all agents) ──────────────────────────────────────
   - name: pii-all
@@ -87,14 +93,12 @@ client = anthropic.Anthropic()
 
 # Each agent is tracked independently
 with aiwarden.run(agent="chatbot") as chat_run:
-    # All LLM calls here are governed by chatbot policies
     response = client.messages.create(
         model="claude-sonnet-4-6",
         messages=[{"role": "user", "content": user_message}],
     )
 
 with aiwarden.run(agent="payment-bot") as pay_run:
-    # Governed by payment-bot policies (tighter limits)
     response = client.messages.create(
         model="claude-sonnet-4-6",
         messages=[{"role": "user", "content": "Process refund for order 123"}],
@@ -102,7 +106,6 @@ with aiwarden.run(agent="payment-bot") as pay_run:
     )
 
 with aiwarden.run(agent="research-agent") as research_run:
-    # Governed by research-agent policies (generous limits)
     for query in research_queries:
         response = client.messages.create(
             model="claude-sonnet-4-6",
@@ -134,13 +137,13 @@ print(f"Research: ${research_run.cost:.4f}, {research_run.turns} turns")
 
 ### Agent isolation
 
-Each agent has its own budget counter. Chatbot spending $50 doesn't affect the payment bot's $2 limit. They are completely independent.
+Each agent has its own budget counter. Chatbot spending $50 doesn't affect the payment bot's $2 limit.
 
 ### Policy layering
 
 A single request may be checked by multiple policies:
 
-```
+```text
 payment-bot call:
   [10] payment-budget  → check $2 daily limit
   [15] payment-control → check 5-turn limit
@@ -150,13 +153,13 @@ payment-bot call:
 
 ### Graceful degradation
 
-The payment bot sees a refusal message ("manual approval needed") rather than a hard crash. It can inform the user and suggest next steps. Only `interrupt` causes a hard stop.
+The payment bot sees a refusal message ("manual approval needed") rather than a hard crash. It can inform the user and suggest next steps.
 
 ---
 
 ## Without hot mode
 
-If you don't want to add `aiwarden.run()` to your code, use the `_agent` kwarg:
+Use the `_agent` kwarg or env var if you don't want to add `aiwarden.run()`:
 
 ```python
 response = client.messages.create(
@@ -165,8 +168,6 @@ response = client.messages.create(
     _agent="payment-bot",  # stripped before API call
 )
 ```
-
-Or set the env var per-process:
 
 ```bash
 AIWARDEN_AGENT_NAME=chatbot python chatbot_service.py

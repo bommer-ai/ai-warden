@@ -1,0 +1,178 @@
+---
+title: Getting Started
+description: Install ai-warden, create a policy file, and protect your AI agents in under 2 minutes
+sidebar_position: 2
+---
+
+import {Card, CardGroup} from '@site/src/components/Card';
+import {Steps, Step} from '@site/src/components/Steps';
+import {Note} from '@site/src/components/Note';
+
+# Getting Started
+
+## Requirements
+
+- **Python** >= 3.9
+- **Any LLM SDK** (Anthropic, OpenAI, or compatible)
+
+---
+
+## Installation
+
+```bash
+pip install ai-warden
+```
+
+For distributed budget tracking (Redis):
+
+```bash
+pip install ai-warden[redis]
+```
+
+For development:
+
+```bash
+pip install ai-warden[dev]
+```
+
+Verify:
+
+```bash
+python -c "import aiwarden; print(aiwarden.__version__)"
+```
+
+---
+
+## Quick start
+
+<Steps>
+
+<Step number="1" title="Create a policy file">
+
+Create `.aiwarden/policies.yaml` in your project root. This defines your security posture:
+
+```yaml
+policies:
+  - name: pii-protection
+    type: pii
+
+  - name: budget-cap
+    type: budget
+    limit: 50.00
+    reset: daily
+
+  - name: tool-safety
+    type: tools
+    builtin:
+      filesystem-safety: true
+      no-privilege-escalation: true
+      safe-git: true
+```
+
+</Step>
+
+<Step number="2" title="Run your agent as normal">
+
+No code changes needed. ai-warden auto-patches your SDK client:
+
+```python
+import anthropic
+
+client = anthropic.Anthropic()
+response = client.messages.create(
+    model="claude-sonnet-4-6",
+    max_tokens=1024,
+    messages=[{"role": "user", "content": "Hello!"}],
+)
+```
+
+Every call to `client.messages.create()` is now intercepted.
+
+</Step>
+
+<Step number="3" title="Check your event log">
+
+```bash
+cat .aiwarden/logs/events.jsonl | python -m json.tool
+```
+
+Each event includes timestamp, agent, model, tokens, cost, latency, and which policies fired.
+
+</Step>
+
+</Steps>
+
+---
+
+## What happens now
+
+Once ai-warden is active:
+
+- **PII in prompts** is redacted before reaching the LLM
+- **Budget limits** are checked before each call — blocked if exceeded
+- **Dangerous tool calls** in responses are replaced with refusal messages
+- **Every call** is logged to `.aiwarden/logs/` with cost, latency, and policy decisions
+
+<Note>
+ai-warden activates automatically on import. If no policy file exists, sensible defaults (PII protection + tool safety) are applied.
+</Note>
+
+---
+
+## How it works
+
+Every time your code calls an LLM, ai-warden intercepts it:
+
+```text
+Your Code  →  client.messages.create()  →  PRE-HOOKS (budget, PII, custom)
+                                            ↓
+                                         Pass? → LLM API → POST-HOOKS → Response + Log
+                                         Block? → PolicyViolationError (zero LLM cost)
+```
+
+Each policy returns one of four decisions:
+
+- **Pass** — the request proceeds normally
+- **Block** — request rejected, `PolicyViolationError` raised, LLM never called
+- **Warn** — logged in the event, request passes through unchanged
+- **Refusal** — (post only) LLM response replaced, agent retries
+
+<Note>
+Policies run locally in your process. Nothing is sent to a remote service. Event logging is async — zero latency impact.
+</Note>
+
+---
+
+## Environment variables
+
+| Variable | Purpose | Default |
+|----------|---------|---------|
+| `AIWARDEN_POLICIES` | Path to policies file | `.aiwarden/policies.yaml` |
+| `AIWARDEN_LOG_DIR` | Directory for event logs | `.aiwarden/logs/` |
+| `AIWARDEN_REDIS_URL` | Redis URL for distributed budgets | _(local mode)_ |
+| `AIWARDEN_DISABLED` | Set to `1` to bypass all policies | `0` |
+| `AIWARDEN_AGENT_NAME` | Default agent name | `default` |
+
+---
+
+## Next steps
+
+<CardGroup cols={2}>
+
+<Card title="Core Concepts" icon="lightbulb" href="/concepts">
+  Policies, agents, runs, and events — the four building blocks.
+</Card>
+
+<Card title="Built-in Policies" icon="shield" href="/policies/overview">
+  All five policy types with parameters and examples.
+</Card>
+
+<Card title="Configuration" icon="gear" href="/configuration">
+  Full YAML reference and options.
+</Card>
+
+<Card title="Multi-Agent" icon="users" href="/multi-agent">
+  Per-agent rules, scoped budgets, topology tracking.
+</Card>
+
+</CardGroup>

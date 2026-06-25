@@ -1,6 +1,17 @@
+---
+title: Multi-Agent
+description: Different agents, different rules — all from one config file
+sidebar_position: 6
+---
+
+import Tabs from '@theme/Tabs';
+import TabItem from '@theme/TabItem';
+
 # Multi-Agent
 
 Different agents, different rules. One config file.
+
+---
 
 ## Scope policies to agents
 
@@ -25,38 +36,48 @@ policies:
     max_cost: 0.50
 ```
 
+---
+
 ## Set the agent name
 
-=== "Environment variable"
+<Tabs>
+<TabItem value="env" label="Environment variable">
 
-    ```bash
-    # One agent per process — simplest
-    export AIWARDEN_AGENT_NAME=chatbot
-    python my_agent.py
-    ```
+```bash
+# One agent per process — simplest
+export AIWARDEN_AGENT_NAME=chatbot
+python my_agent.py
+```
 
-=== "Context manager"
+</TabItem>
+<TabItem value="context" label="Context manager">
 
-    ```python
-    import aiwarden
+```python
+import aiwarden
 
-    # Multiple agents in same process
-    with aiwarden.agent("chatbot"):
-        chatbot.run(task)
+# Multiple agents in same process
+with aiwarden.agent("chatbot"):
+    chatbot.run(task)
 
-    with aiwarden.agent("payment-bot"):
-        payment.run(task)
-    ```
+with aiwarden.agent("payment-bot"):
+    payment.run(task)
+```
 
-=== "Hot mode"
+</TabItem>
+<TabItem value="hot" label="Hot mode">
 
-    ```python
-    import aiwarden
+```python
+import aiwarden
 
-    with aiwarden.run(agent="chatbot") as r:
-        chatbot.run(task)
-    # r.cost, r.turns, r.status available
-    ```
+with aiwarden.run(agent="chatbot") as r:
+    chatbot.run(task)
+# r.cost, r.turns, r.status available
+```
+
+</TabItem>
+</Tabs>
+
+---
 
 ## How scoping works
 
@@ -65,6 +86,8 @@ policies:
 | No `agents` field | Applies to **all** agents |
 | `agents: ["chatbot"]` | Only when agent = "chatbot" |
 | No agent name set by user | Only global policies run |
+
+---
 
 ## Parallel agents
 

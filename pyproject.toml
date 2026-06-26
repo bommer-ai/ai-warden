@@ -3,7 +3,7 @@ requires = ["setuptools>=68", "setuptools_scm>=8"]
 build-backend = "setuptools.build_meta"
 
 [project]
-name = "ai-warden"
+name = "ai-warden-oss"
 dynamic = ["version"]
 description = "Policy enforcement and observability for LLM agents. Zero code changes."
 dependencies = [

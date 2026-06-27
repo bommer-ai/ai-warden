@@ -23,9 +23,12 @@ Known limitations:
   - Turn counter is per-process. Multiple processes each track independently.
 """
 import time as _time
+from collections import deque
 from contextvars import ContextVar
 from dataclasses import dataclass, field
 from uuid import uuid4
+
+_MAX_TOOLS_TRACKED = 1000
 
 
 # ── Run state ────────────────────────────────────────────────────────────────
@@ -37,7 +40,7 @@ class RunState:
     turn: int = 0
     start_time: float = field(default_factory=_time.monotonic)
     total_cost: float = 0.0
-    tools_called: list = field(default_factory=list)
+    tools_called: deque = field(default_factory=lambda: deque(maxlen=_MAX_TOOLS_TRACKED))
 
 
 _current_run: ContextVar[RunState | None] = ContextVar("aiwarden_run", default=None)

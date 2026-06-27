@@ -1,25 +1,41 @@
 import atexit
 import json
+import logging
 import threading
 from pathlib import Path
-from queue import Empty, Queue
+from queue import Empty, Full, Queue
 
 from aiwarden import config
 
-_queue: Queue = Queue()
+log = logging.getLogger(__name__)
+
+_MAX_QUEUE_SIZE = 10_000
+_queue: Queue = Queue(maxsize=_MAX_QUEUE_SIZE)
 _worker_started = False
 _lock = threading.Lock()
+_dropped_lock = threading.Lock()
+_dropped_events = 0
 
 
 def capture(event: dict):
-    """Enqueue event — non-blocking, never raises."""
+    """Enqueue event — non-blocking, never raises. Drops events if queue is full."""
     if not config.ENABLED:
         return
     try:
         _queue.put_nowait(event)
         _ensure_worker()
+    except Full:
+        global _dropped_events
+        with _dropped_lock:
+            _dropped_events += 1
     except Exception:
         pass
+
+
+def get_dropped_count() -> int:
+    """Return the number of events dropped due to queue backpressure (thread-safe)."""
+    with _dropped_lock:
+        return _dropped_events
 
 
 def flush():
@@ -36,6 +52,8 @@ def flush():
 
 def _ensure_worker():
     global _worker_started
+    if _worker_started:
+        return
     with _lock:
         if not _worker_started:
             _worker_started = True

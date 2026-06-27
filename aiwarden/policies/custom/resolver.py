@@ -4,8 +4,15 @@ Field resolution and rule evaluation for custom policies.
 Handles dotted-path resolution into nested dicts/lists,
 when-condition checking, and full rule evaluation.
 """
+from functools import lru_cache
+
 from aiwarden.policies.custom.operators import match_value
 from aiwarden.policies.custom.schema import CustomRule
+
+
+@lru_cache(maxsize=512)
+def _split_path(field_path: str) -> tuple[str, ...]:
+    return tuple(field_path.split("."))
 
 
 def resolve_field(data: dict, field_path: str):
@@ -15,7 +22,7 @@ def resolve_field(data: dict, field_path: str):
     Returns None if path doesn't exist.
     """
     node = data
-    for key in field_path.split("."):
+    for key in _split_path(field_path):
         if isinstance(node, dict):
             node = node.get(key)
         elif isinstance(node, list):

@@ -1,0 +1,45 @@
+{
+  "core": [
+    {
+      "name": "custom_1rule_miss",
+      "mean_threshold_us": 1.09,
+      "p99_threshold_us": 1.42
+    },
+    {
+      "name": "custom_1rule_match",
+      "mean_threshold_us": 1.59,
+      "p99_threshold_us": 2.0
+    },
+    {
+      "name": "pii_1kb_5pat",
+      "mean_threshold_us": 171.89,
+      "p99_threshold_us": 194.0
+    },
+    {
+      "name": "budget_cycle",
+      "mean_threshold_us": 9.46,
+      "p99_threshold_us": 12.0
+    },
+    {
+      "name": "tools_builtin_match",
+      "mean_threshold_us": 9.53,
+      "p99_threshold_us": 12.08
+    },
+    {
+      "name": "engine_pre_4policies",
+      "mean_threshold_us": 22.93,
+      "p99_threshold_us": 28.92
+    },
+    {
+      "name": "extract_caller",
+      "mean_threshold_us": 21.4,
+      "p99_threshold_us": 27.0
+    }
+  ],
+  "metadata": {
+    "generated_from": "full-mode run (30 runs \u00d7 2000 iters)",
+    "commit": "c59df80",
+    "timestamp": "2026-06-22T17:58:18+0530",
+    "safety_margin": "2.0x mean and p99"
+  }
+}

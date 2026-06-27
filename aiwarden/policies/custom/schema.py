@@ -5,12 +5,42 @@ Validates rule configs at load time — catches errors early,
 not at enforcement time when a request hits the policy.
 """
 import logging
+import re
 from dataclasses import dataclass, field
 from enum import Enum
 
 from aiwarden.policies.custom.operators import VALID_OPERATORS
 
 log = logging.getLogger(__name__)
+
+
+_NESTED_QUANTIFIER_RE = re.compile(
+    r"[+*}]\)?[+*]"       # (a+)+ or a*+ or a{2,}* style
+    r"|"
+    r"\([^)]*[+*][^)]*\)[+*]"  # (a+b*)+ or (x|a+)* style
+    r"|"
+    r"\([^)]*\|[^)]*\)[+*]"    # (a|a)+ alternation with quantifier
+)
+
+
+def _validate_regex_safety(pattern: str) -> str | None:
+    """
+    Validate regex pattern at load time.
+    Rejects: invalid regex, overly long patterns, and patterns with nested
+    quantifiers that are known to cause catastrophic backtracking (ReDoS).
+    """
+    try:
+        re.compile(pattern)
+    except re.error as e:
+        return f"invalid regex: {e}"
+    if len(pattern) > 1000:
+        return f"regex pattern too long ({len(pattern)} chars, max 1000)"
+    if _NESTED_QUANTIFIER_RE.search(pattern):
+        return (
+            f"regex contains nested quantifiers (potential ReDoS): '{pattern[:60]}'"
+            " — rewrite without nested repetition"
+        )
+    return None
 
 
 class Action(str, Enum):
@@ -63,9 +93,13 @@ def validate_rule(raw: dict) -> list[str]:
             if not isinstance(matchers, dict):
                 errors.append(f"match.{field_path}: value must be {{operator: value}}, got {type(matchers).__name__}")
                 continue
-            for op in matchers:
+            for op, value in matchers.items():
                 if op not in VALID_OPERATORS:
                     errors.append(f"match.{field_path}: unknown operator '{op}' — valid: {sorted(VALID_OPERATORS)}")
+                elif op == "regex" and isinstance(value, str):
+                    regex_err = _validate_regex_safety(value)
+                    if regex_err:
+                        errors.append(f"match.{field_path}: {regex_err}")
 
     when = raw.get("when", {})
     if when and not isinstance(when, dict):

@@ -1,11 +1,28 @@
 import logging
 import re
 from dataclasses import dataclass, field
-from fnmatch import fnmatch
+from functools import lru_cache
 
 log = logging.getLogger(__name__)
 
 _KNOWN_OPS = frozenset({"contains", "startswith", "not_startswith", "equals", "in", "regex"})
+
+
+@lru_cache(maxsize=256)
+def _compile_glob(pattern: str):
+    """Pre-compile a glob pattern to regex for fast matching."""
+    import fnmatch as _fnmatch_mod
+    regex = _fnmatch_mod.translate(pattern)
+    return re.compile(regex).match
+
+
+@lru_cache(maxsize=1024)
+def _compile_regex(pattern: str):
+    """Pre-compile a regex pattern for reuse."""
+    return re.compile(pattern)
+
+
+_REGEX_MATCH_LIMIT = 1_000_000
 
 
 # ── Rule dataclass ─────────────────────────────────────────────────────────────
@@ -47,7 +64,11 @@ def matches(rule: PolicyRule, tool_name: str, tool_input: dict, metadata: dict) 
 def _match_tool(pattern, tool_name: str) -> bool:
     if isinstance(pattern, list):
         return any(_match_tool(p, tool_name) for p in pattern)
-    return pattern == "*" or fnmatch(tool_name, pattern)
+    if pattern == "*":
+        return True
+    if "*" not in pattern and "?" not in pattern and "[" not in pattern:
+        return pattern == tool_name
+    return _compile_glob(pattern)(tool_name) is not None
 
 
 def _match_field(value: str, matchers: dict) -> bool:
@@ -73,7 +94,8 @@ def _match_field(value: str, matchers: dict) -> bool:
             if value not in [str(p) for p in pattern]:
                 return False
         elif op == "regex":
-            if not re.search(str(pattern), value):
+            search_value = value[:_REGEX_MATCH_LIMIT] if len(value) > _REGEX_MATCH_LIMIT else value
+            if not _compile_regex(str(pattern)).search(search_value):
                 return False
     return True
 

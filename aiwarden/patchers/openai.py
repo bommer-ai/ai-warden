@@ -1,4 +1,5 @@
 import time
+from types import SimpleNamespace
 
 from aiwarden.patchers._common import build_and_capture
 from aiwarden.policies import engine
@@ -6,14 +7,16 @@ from aiwarden.policies.base import PolicyViolationError
 
 _patched  = False
 _original = None
+_original_async = None
 
 
 def patch(openai_module):
     """
-    Patches at the class level for OpenAI SDK.
-    openai.OpenAI().chat.completions.create → our wrapper
+    Patches at the class level for OpenAI SDK (sync and async).
+    openai.OpenAI().chat.completions.create → our sync wrapper
+    openai.AsyncOpenAI().chat.completions.create → our async wrapper
     """
-    global _patched, _original
+    global _patched, _original, _original_async
     if _patched:
         return
     _patched = True
@@ -23,12 +26,14 @@ def patch(openai_module):
         _original = Completions.create
         Completions.create = _patched_create
     except Exception:
-        # Fallback: patch module-level attribute (older SDK versions)
-        try:
-            _original = openai_module.chat.completions.create
-            openai_module.chat.completions.create = lambda *a, **kw: _patched_create(None, *a, **kw)
-        except Exception:
-            pass
+        pass
+
+    try:
+        from openai.resources.chat.completions import AsyncCompletions
+        _original_async = AsyncCompletions.create
+        AsyncCompletions.create = _patched_async_create
+    except Exception:
+        pass
 
 
 # ── sync ──────────────────────────────────────────────────────────────────────
@@ -128,8 +133,6 @@ class _StreamWrapper:
                 None,
             )
 
-            # Build a minimal response-like object for post-hooks
-            from types import SimpleNamespace
             fake_msg = SimpleNamespace(content=content, tool_calls=None)
             fake_choice = SimpleNamespace(message=fake_msg, finish_reason="stop")
             fake_usage = SimpleNamespace(
@@ -149,6 +152,108 @@ class _StreamWrapper:
                 getattr(fake_usage, "prompt_tokens", 0) or 0,
                 getattr(fake_usage, "completion_tokens", 0) or 0,
             )
+            latency = int((time.monotonic() - self._start) * 1000)
+            _emit(self._kwargs, fake_response, latency, streamed=True,
+                  pre_fired=self._pre_fired, post_fired=post_fired)
+        except Exception:
+            pass
+
+
+# ── async ────────────────────────────────────────────────────────────────────
+
+async def _patched_async_create(self, *args, **kwargs):
+    if kwargs.get("stream"):
+        kwargs = {
+            **kwargs,
+            "stream_options": {
+                **kwargs.get("stream_options", {}),
+                "include_usage": True,
+            },
+        }
+        kwargs, block, pre_fired = engine.run_pre(kwargs)
+        if block:
+            _emit_blocked(kwargs, pre_fired)
+            raise PolicyViolationError(block.reason)
+        api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+        raw_stream = await _original_async(self, *args, **api_kwargs)
+        return _AsyncStreamWrapper(raw_stream, kwargs, time.monotonic(), pre_fired)
+
+    # 1. PRE-HOOKS
+    kwargs, block, pre_fired = engine.run_pre(kwargs)
+    if block:
+        _emit_blocked(kwargs, pre_fired)
+        raise PolicyViolationError(block.reason)
+
+    # 2. LLM CALL
+    api_kwargs = {k: v for k, v in kwargs.items() if not k.startswith("_")}
+    start    = time.monotonic()
+    response = await _original_async(self, *args, **api_kwargs)
+    latency  = int((time.monotonic() - start) * 1000)
+
+    # 3. POST-HOOKS
+    response, post_fired = engine.run_post(kwargs, response)
+
+    # 4. CAPTURE
+    _emit(kwargs, response, latency, streamed=False, pre_fired=pre_fired, post_fired=post_fired)
+    return response
+
+
+class _AsyncStreamWrapper:
+    def __init__(self, stream, request_kwargs, start_time, pre_fired):
+        self._stream    = stream
+        self._kwargs    = request_kwargs
+        self._start     = start_time
+        self._pre_fired = pre_fired
+        self._chunks    = []
+        self._finalized = False
+
+    def __aiter__(self):
+        return self
+
+    async def __anext__(self):
+        try:
+            chunk = await self._stream.__anext__()
+            self._chunks.append(chunk)
+            return chunk
+        except StopAsyncIteration:
+            self._finalize()
+            raise
+
+    async def __aenter__(self):
+        return self
+
+    async def __aexit__(self, *args):
+        self._finalize()
+        try:
+            return await self._stream.__aexit__(*args)
+        except Exception:
+            return False
+
+    def _finalize(self):
+        if self._finalized:
+            return
+        self._finalized = True
+        try:
+            content = "".join(
+                c.choices[0].delta.content or ""
+                for c in self._chunks
+                if c.choices and c.choices[0].delta and c.choices[0].delta.content
+            )
+            usage = next(
+                (c.usage for c in reversed(self._chunks) if getattr(c, "usage", None)),
+                None,
+            )
+            fake_msg = SimpleNamespace(content=content, tool_calls=None)
+            fake_choice = SimpleNamespace(message=fake_msg, finish_reason="stop")
+            fake_usage = SimpleNamespace(
+                prompt_tokens=getattr(usage, "prompt_tokens", 0) or 0,
+                completion_tokens=getattr(usage, "completion_tokens", 0) or 0,
+            )
+            fake_response = SimpleNamespace(
+                choices=[fake_choice], usage=fake_usage,
+                model=self._kwargs.get("model", ""),
+            )
+            fake_response, post_fired = engine.run_post(self._kwargs, fake_response)
             latency = int((time.monotonic() - self._start) * 1000)
             _emit(self._kwargs, fake_response, latency, streamed=True,
                   pre_fired=self._pre_fired, post_fired=post_fired)

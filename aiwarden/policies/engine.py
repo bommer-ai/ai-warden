@@ -1,4 +1,5 @@
 import logging
+import threading
 from typing import Optional
 
 from aiwarden import config
@@ -36,6 +37,7 @@ class PolicyEngine:
 
     def __init__(self):
         self._policies: list[Policy] | None = None
+        self._load_lock = threading.Lock()
 
     def run_pre(self, request: dict) -> tuple[dict, Optional[Block], list[PolicyResult]]:
         """
@@ -133,13 +135,16 @@ class PolicyEngine:
 
     def _get_policies(self) -> list[Policy]:
         if self._policies is None:
-            try:
-                from aiwarden.policies.loader import load_policies
-                self._policies = load_policies()
-                self._policies.sort(key=lambda p: p.priority)
-            except Exception as e:
-                log.warning(
-                    "[aiwarden] failed to load policies — running unprotected: %s", e
-                )
-                self._policies = []
+            with self._load_lock:
+                if self._policies is None:
+                    try:
+                        from aiwarden.policies.loader import load_policies
+                        policies = load_policies()
+                        policies.sort(key=lambda p: p.priority)
+                        self._policies = policies
+                    except Exception as e:
+                        log.warning(
+                            "[aiwarden] failed to load policies — running unprotected: %s", e
+                        )
+                        self._policies = []
         return self._policies
